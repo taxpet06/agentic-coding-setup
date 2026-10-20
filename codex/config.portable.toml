@@ -1,6 +1,4 @@
 # agentic-coding-setup: portable settings appended by bootstrap.sh (full desktop-app config lives in config.toml)
-model = "gpt-5.6-luna"
-model_reasoning_effort = "medium"
 
 [marketplaces.ponytail]
 source_type = "git"

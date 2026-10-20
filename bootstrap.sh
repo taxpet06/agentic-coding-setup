@@ -53,6 +53,7 @@ cp -a "$R/codex/AGENTS.md" "$R/codex/hooks.json" ~/.codex/
 cp -a "$R/codex/rules/." ~/.codex/rules/; cp -a "$R/codex/skills/." ~/.codex/skills/
 # GSD generates config.toml; append only the portable settings once (full desktop config: codex/config.toml)
 grep -q 'agentic-coding-setup' ~/.codex/config.toml 2>/dev/null || { echo; cat "$R/codex/config.portable.toml"; } >> ~/.codex/config.toml
+grep -q '^model = ' ~/.codex/config.toml || sed -i '1i model = "gpt-5.6-luna"\nmodel_reasoning_effort = "medium"' ~/.codex/config.toml   # top-level keys must precede tables
 sed -i 's#/home/petros#'"$HOME"'#g' ~/.codex/hooks.json
 
 step "manual logins still needed (tokens are never in this repo)"
