@@ -1,0 +1,2 @@
+prefix_rule(pattern=["sed", "-n"], decision="allow")
+prefix_rule(pattern=["test", "!", "-e", "/tmp/graphify-cleanup-backup-2026-09-22"], decision="allow")

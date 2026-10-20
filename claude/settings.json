@@ -1,0 +1,151 @@
+{
+  "model": "sonnet",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/usr/bin/node\" \"/home/petros/.claude/hooks/gsd-check-update.js\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/home/petros/.claude/hooks/gsd-session-state.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/usr/bin/node\" \"/home/petros/.claude/hooks/gsd-context-monitor.js\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/usr/bin/node\" \"/home/petros/.claude/hooks/gsd-read-injection-scanner.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/home/petros/.claude/hooks/gsd-phase-boundary.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/usr/bin/node\" \"/home/petros/.claude/hooks/gsd-prompt-guard.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/usr/bin/node\" \"/home/petros/.claude/hooks/gsd-read-guard.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/usr/bin/node\" \"/home/petros/.claude/hooks/gsd-workflow-guard.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"/home/petros/.claude/hooks/gsd-validate-commit.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "\"/usr/bin/node\" \"/home/petros/.claude/hooks/gsd-statusline.js\""
+  },
+  "enabledPlugins": {
+    "ponytail@ponytail": true
+  },
+  "extraKnownMarketplaces": {
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
+    }
+  },
+  "effortLevel": "high",
+  "modelSettings": {
+    "claude-sonnet-5-5": {
+      "effortLevel": "low"
+    }
+  },
+  "tui": "fullscreen",
+  "skipWorkflowUsageWarning": true,
+  "theme": "dark",
+  "remoteControlAtStartup": false,
+  "agentPushNotifEnabled": true,
+  "autoMode": {
+    "environment": [
+      "### Org-wide",
+      "**Organization**: None configured",
+      "**Cloud provider(s)**: None configured",
+      "**Repository visibility**: assume private unless the remote host and repo name indicate otherwise, or a visibility check in the transcript shows public — no remotes configured for this repo (local-only, no GitHub remote per CLAUDE.md)",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: None configured",
+      "**Default / protected branches**: Not queryable (no remote configured; org/repo not derivable)",
+      "**CI/CD deploy targets**: make101-frontend.fly.dev, make101-backend.fly.dev (fly.io — seen repeatedly in project transcript host contacts); mei-petros-prototype.vercel.app / mei-petros-prototype-55xkq4u9l-petros3.vercel.app (Vercel — seen in project transcript host contacts)",
+      "**Network posture**: Tailscale-connected — 100.70.216.29, 100.74.74.28, 10.132.49.83 contacted from this project's transcripts (private/tailnet addresses)",
+      "**Source control**: The trusted repo (local-only git repo at /home/petros/Github/dali/make101, no remotes configured) — no additional orgs configured",
+      "**Trusted internal domains**: None configured",
+      "**Trusted cloud buckets**: None configured",
+      "**Key internal services**: make101-frontend.fly.dev, make101-backend.fly.dev, mei-petros-prototype.vercel.app (deploy/preview targets observed repeatedly in this project's transcripts)",
+      "**Internal package registry**: None configured",
+      "**Sensitive data locations & audiences**: make-backend/.env, make-backend/.env.bak-before-claude, make-backend/.env.bak-phone, make-backend/.env.example, make-frontend/.env.local, make-mobile/.env — treat as credential/secret-bearing; share only with audiences cleared at the [named+specifics] bar",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment (default heuristic — no prod-named hosts observed in this project's recon)",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries `prod` or `production` as a whole word or name segment",
+      "### User-specific",
+      "**Primary use of Claude Code**: software development (Make admin-prototype web app: React/Vite/TypeScript frontend, static JSON data, Fly.io/Vercel deploys)",
+      "**Trusted repo**: /home/petros/Github/dali/make101 (local-only git repo, no GitHub remote configured) — its working directory only",
+      "**Org-specific CLIs**: flyctl, tailscale, gsd-sdk, graphify (non-standard CLIs seen repeatedly in this project's transcripts)",
+      "**Routine under petros/ prefix**: not established — no evidence of a user-namespace convention in this repo"
+    ]
+  }
+}

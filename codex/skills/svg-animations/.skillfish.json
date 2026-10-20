@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "svg-animations",
+  "owner": "markus41",
+  "repo": "claude",
+  "path": "plugins/react-animation-studio/skills/svg-animations",
+  "branch": "main",
+  "sha": "bec7c0a6c5c09d7302e689c2149a02d0394b7095",
+  "source": "manual"
+}

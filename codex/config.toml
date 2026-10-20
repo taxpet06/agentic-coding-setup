@@ -1,0 +1,142 @@
+model = "gpt-5.6-luna"
+model_reasoning_effort = "medium"
+service_tier = "priority"
+
+[projects."/home/petros"]
+trust_level = "trusted"
+
+[projects."/home/petros/Recruiting"]
+trust_level = "trusted"
+
+[tui]
+screen_reader_detection_done = true
+
+[tui.model_availability_nux]
+gpt-6-astra = 2
+"gpt-6.1-sol" = 2
+
+[desktop]
+followUpQueueMode = "steer"
+external-agent-import-sync-item-types = "all"
+external-agent-import-sync-enabled = true
+conversationDetailMode = "STEPS_COMMANDS"
+ambient-suggestions-enabled = true
+
+[marketplaces.openai-bundled]
+source_type = "local"
+source = "/home/petros/.codex/.tmp/bundled-marketplaces/openai-bundled"
+
+[marketplaces.ponytail]
+source_type = "git"
+source = "https://github.com/DietrichGebert/ponytail.git"
+
+[marketplaces.openai-primary-runtime]
+source_type = "local"
+source = "/home/petros/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
+
+[plugins."codex-app-tools@openai-bundled"]
+enabled = true
+
+[plugins."browser@openai-bundled"]
+enabled = true
+
+[plugins."unified-computer-use@openai-bundled"]
+enabled = true
+
+[plugins."visualize@openai-bundled"]
+enabled = true
+
+[plugins."ponytail@ponytail"]
+enabled = true
+
+[plugins."documents@openai-primary-runtime"]
+enabled = true
+
+[plugins."pdf@openai-primary-runtime"]
+enabled = true
+
+[plugins."spreadsheets@openai-primary-runtime"]
+enabled = true
+
+[plugins."presentations@openai-primary-runtime"]
+enabled = true
+
+[plugins."template-creator@openai-primary-runtime"]
+enabled = true
+
+[plugins."chrome@openai-bundled"]
+enabled = true
+
+[plugins."code-review@openai-bundled"]
+enabled = true
+
+[mcp_servers.node_repl]
+args = []
+command = "/usr/lib/chatgpt/resources/cua_node/bin/node_repl"
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS = "1000"
+NODE_REPL_NODE_MODULE_DIRS = "/usr/lib/chatgpt/resources/cua_node/lib/node_modules"
+NODE_REPL_NODE_PATH = "/usr/lib/chatgpt/resources/cua_node/bin/node"
+NODE_REPL_TRUSTED_CODE_PATHS = "/home/petros/.codex:/usr/lib/chatgpt/resources/cua_node/lib/node_modules"
+CODEX_HOME = "/home/petros/.codex"
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab,mcpapps"
+BROWSER_USE_TINYSKY_ENABLED = "1"
+NODE_REPL_INSTRUCTIONS_USE_CASE_BROWSER = ""
+NODE_REPL_INSTRUCTIONS_USE_CASE_CHROME = ""
+BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"
+BROWSER_USE_CODEX_APP_VERSION = "26.930.31730"
+NODE_REPL_TRUSTED_SERVICES = '{"browser":"/home/petros/.codex/plugins/cache/openai-bundled/browser/26.930.31730/scripts/browser-service.mjs"}'
+CODEX_CLI_PATH = "/usr/lib/chatgpt/resources/codex"
+
+[mcp_servers.dali-os]
+url = "https://os.dali.dartmouth.edu/mcp"
+
+[mcp_servers.linkedin-profile-manager]
+command = "node"
+args = ["/home/petros/Recruiting/.tools/linkedin-profile-manager-mcp/dist/index.js"]
+
+[mcp_servers.linkedin-profile-manager.env]
+LINKEDIN_MCP_CONFIG = "/home/petros/Recruiting/.tools/linkedin-profile-manager-mcp/linkedin-mcp.config.json"
+
+[hooks.state]
+
+[hooks.state."/home/petros/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:db945977940615c1a10f06994c426802fba4cbf8a48ea7582fb6670b6828e420"
+
+[hooks.state."/home/petros/.codex/hooks.json:pre_tool_use:1:0"]
+trusted_hash = "sha256:3c5afd0221da8e219ee7779e9dc46f38e3d1392695db17a27e51ddbdbd3796b6"
+
+[hooks.state."/home/petros/.codex/hooks.json:pre_tool_use:2:0"]
+trusted_hash = "sha256:5bc83dc514deba8b4a3d5f08acd5e35f0779f9ca4b58e9fca37a7a6b09d0cce8"
+
+[hooks.state."/home/petros/.codex/hooks.json:pre_tool_use:3:0"]
+trusted_hash = "sha256:bb00b2d29241d1a11eb47ccef9ff2df20d5505ce1d9958662d0276dcf1b97acd"
+
+[hooks.state."/home/petros/.codex/hooks.json:post_tool_use:0:0"]
+trusted_hash = "sha256:8664bf61199d7d4975ee16232e6fb0f1c2f4c7055d30e20b91c52bff12bcd12f"
+
+[hooks.state."/home/petros/.codex/hooks.json:post_tool_use:1:0"]
+trusted_hash = "sha256:91f7db53a50af78e85590bb8baf8f39c025603297b2d758d1f24158435e75946"
+
+[hooks.state."/home/petros/.codex/hooks.json:post_tool_use:2:0"]
+trusted_hash = "sha256:1e1548983071f19eba27f884502dc55598aa3d589fab39a5e151b100f157e0bd"
+
+[hooks.state."/home/petros/.codex/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:dc5e73914499967483fc523dca09592e65c13c49e5a6b93b706ed81fb823c4b1"
+
+[hooks.state."/home/petros/.codex/hooks.json:session_start:1:0"]
+trusted_hash = "sha256:2c63a7a728e1f1ad4730b61445e8b999d300f422642924537904b6ee03c29aa8"
+
+[hooks.state."/home/petros/Recruiting/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:8d6a78ee225404b3a6c4ca1d30ea194715d4b7a61f5ea1e2465a52342553f821"
+
+[hooks.state."ponytail@ponytail:hooks/claude-codex-hooks.json:session_start:0:0"]
+trusted_hash = "sha256:7ee5d5ae1f4a9e55f1f429f2960c2f9f32293f198c0e8e2e42b2fb3b4eeda142"
+
+[hooks.state."ponytail@ponytail:hooks/claude-codex-hooks.json:user_prompt_submit:0:0"]
+trusted_hash = "sha256:8c9efc5a5e649c8cdca3f0b7bf4cba81d9717d1bc930c7dbc18b6efd66c7c58c"
+
+[hooks.state."ponytail@ponytail:hooks/claude-codex-hooks.json:subagent_start:0:0"]
+trusted_hash = "sha256:7954d675ef3bafd5e5a6073ae51d7de57a08f21340f241c332f99078e955675d"

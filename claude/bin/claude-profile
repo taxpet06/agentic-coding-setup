@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Run Claude Code under a separate account while sharing ~/.claude skills, plugins,
+# agents, CLAUDE.md, settings and user-scope MCP servers.
+# Invoke via a symlink named claude-<profile> (e.g. claude-personal, claude-school).
+set -euo pipefail
+
+name="${0##*/}"
+profile="${name#claude-}"
+[ "$profile" != "$name" ] || { echo "run me as a symlink named claude-<profile>" >&2; exit 1; }
+
+main="$HOME/.claude"
+dir="$HOME/.claude-$profile"
+mkdir -p "$dir"
+
+for f in skills agents plugins CLAUDE.md settings.json; do
+  [ -e "$main/$f" ] || continue
+  [ -L "$dir/$f" ] && continue
+  [ -e "$dir/$f" ] && mv "$dir/$f" "$dir/$f.bak-$(date +%s)"
+  ln -s "$main/$f" "$dir/$f"
+done
+
+# user-scope MCP servers live in .claude.json, which also holds this profile's
+# account state, so it can't be symlinked -- copy just the mcpServers key across.
+# ponytail: last writer wins if the same profile is already running; harmless,
+# claude rewrites the file on exit anyway.
+python3 - "$HOME/.claude.json" "$dir/.claude.json" <<'PY'
+import json, os, sys
+src, dst = sys.argv[1:3]
+want = json.load(open(src)).get("mcpServers", {})
+cur = json.load(open(dst)) if os.path.exists(dst) else {}
+if cur.get("mcpServers") != want:
+    cur["mcpServers"] = want
+    tmp = dst + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(cur, fh, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, dst)
+PY
+
+exec env CLAUDE_CONFIG_DIR="$dir" claude "$@"
