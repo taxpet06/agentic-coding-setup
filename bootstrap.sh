@@ -17,6 +17,7 @@ have git  || echo "MISSING git"
 have claude || { curl -fsSL https://claude.ai/install.sh | bash; }
 have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 have npm && { have codex || npm i -g @openai/codex; npm i -g defuddle vercel; }
+for b in codex defuddle vercel; do [ -x "$(npm prefix -g 2>/dev/null)/bin/$b" ] && ln -sfn "$(npm prefix -g)/bin/$b" ~/.local/bin/$b; done
 have uv && uv tool install graphifyy >/dev/null 2>&1 || true
 
 step "claude shared config -> ~/.claude (existing files backed up once)"
@@ -26,7 +27,7 @@ for f in CLAUDE.md settings.json; do
   cp "$R/claude/$f" ~/.claude/$f
 done
 # hooks hardcode the source machine's node path and home; point them at this machine's
-sed -i "s#\"/usr/bin/node\"#\"$(command -v node)\"#g; s#/home/petros#$HOME#g" ~/.claude/settings.json
+sed -i "s#/usr/bin/node#$(command -v node)#g; s#/home/petros#$HOME#g" ~/.claude/settings.json
 mkdir -p ~/.claude/hooks
 cp -a "$R/claude/skills/." ~/.claude/skills/
 cp -a "$R/agents-skills/." ~/.agents/skills/
@@ -50,8 +51,9 @@ step "codex"
 mkdir -p ~/.codex/rules ~/.codex/skills
 cp -a "$R/codex/AGENTS.md" "$R/codex/hooks.json" ~/.codex/
 cp -a "$R/codex/rules/." ~/.codex/rules/; cp -a "$R/codex/skills/." ~/.codex/skills/
-[ -f ~/.codex/config.toml ] || cp "$R/codex/config.toml" ~/.codex/config.toml   # machine-specific paths: never overwritten
-echo "codex/config.toml is only copied on first run; diff it by hand after that"
+# GSD generates config.toml; append only the portable settings once (full desktop config: codex/config.toml)
+grep -q 'agentic-coding-setup' ~/.codex/config.toml 2>/dev/null || { echo; cat "$R/codex/config.portable.toml"; } >> ~/.codex/config.toml
+sed -i 's#/home/petros#'"$HOME"'#g' ~/.codex/hooks.json
 
 step "manual logins still needed (tokens are never in this repo)"
 for c in "gh auth status" "claude auth status" "codex login status"; do $c >/dev/null 2>&1 || echo "  run: ${c%% status}"; done

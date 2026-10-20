@@ -8,7 +8,7 @@ One repo for Claude Code (`~/.claude`, `claude-personal`, `claude-school`) and C
 | `claude/skills/` | `~/.claude/skills/` | non-GSD skills; some are symlinks into `~/.agents/skills` |
 | `agents-skills/` | `~/.agents/skills/` | expo/eas/emil/etc. |
 | `claude/bin/claude-profile` | `~/.local/bin/` | `claude-personal` / `claude-school` symlinks share skills, plugins, agents, settings, MCP from `~/.claude`; only login/history differ |
-| `codex/` | `~/.codex/` | `config.toml` is copied once only (absolute paths differ per machine) |
+| `codex/` | `~/.codex/` | `config.toml` is the desktop-app config for reference; `config.portable.toml` is appended on other machines |
 | `mcp.md` | n/a | MCP connection instructions |
 
 Not stored (reinstalled by `bootstrap.sh`): GSD (`npx get-shit-done-cc`), the ponytail plugin, codex plugins cache, CLIs (codex, graphify, defuddle, vercel).
