@@ -57,12 +57,12 @@ grep -q '^model = ' ~/.codex/config.toml || sed -i '1i model = "gpt-5.6-luna"\nm
 sed -i 's#/home/petros/#'"$HOME"'/#g' ~/.codex/hooks.json
 
 step "tailscale (install or update; needs sudo)"
+install -m755 "$R/bin/tailscale_install" "$R/bin/tailscale_up" ~/.local/bin/
 if [ -t 0 ] || sudo -n true 2>/dev/null; then
-  curl -fsSL https://tailscale.com/install.sh | sh   # installs, or upgrades to latest if already there
+  ~/.local/bin/tailscale_install || echo "  TAILSCALE INSTALL FAILED (see above)"
 else
-  echo "  no terminal for sudo: re-run ./bootstrap.sh in a terminal to install/update tailscale"
+  echo "  no terminal for sudo: skipped. tailscale_up installs it on first run."
 fi
-install -m755 "$R/bin/tailscale_up" ~/.local/bin/tailscale_up
 
 step "manual logins still needed (tokens are never in this repo)"
 for c in "gh auth status" "claude auth status" "codex login status"; do $c >/dev/null 2>&1 || echo "  run: ${c%% status}"; done

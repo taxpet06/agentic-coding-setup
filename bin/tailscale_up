@@ -3,7 +3,7 @@
 # Extra args go to `tailscale up`, e.g. `tailscale_up --hostname=wsl-laptop`.
 set -euo pipefail
 
-command -v tailscale >/dev/null || { echo "tailscale is not installed; run ./bootstrap.sh in a terminal first"; exit 1; }
+command -v tailscale >/dev/null || "$(dirname "$(readlink -f "$0")")/tailscale_install"
 
 # start the daemon (WSL without systemd: run it in the background)
 if [ "$(ps -p 1 -o comm=)" = systemd ]; then

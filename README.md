@@ -8,7 +8,7 @@ One repo for Claude Code (`~/.claude`, `claude-personal`, `claude-school`) and C
 | `claude/skills/` | `~/.claude/skills/` | non-GSD skills; some are symlinks into `~/.agents/skills` |
 | `agents-skills/` | `~/.agents/skills/` | expo/eas/emil/etc. |
 | `claude/bin/claude-profile` | `~/.local/bin/` | `claude-personal` / `claude-school` symlinks share skills, plugins, agents, settings, MCP from `~/.claude`; only login/history differ |
-| `bin/tailscale_up` | `~/.local/bin/` | starts tailscaled, runs `tailscale up --ssh`, prints the `ssh` command to reach this machine. `bootstrap.sh` installs/updates tailscale itself (needs sudo, so run it in a terminal) |
+| `bin/tailscale_up`, `bin/tailscale_install` | `~/.local/bin/` | `tailscale_up` installs/updates tailscale if missing (via `tailscale_install`), starts tailscaled, runs `tailscale up --ssh`, prints the `ssh` command. `bootstrap.sh` also runs `tailscale_install` when it can sudo |
 | `codex/` | `~/.codex/` | `config.toml` is the desktop-app config for reference; `config.portable.toml` is appended on other machines |
 | `mcp.md` | n/a | MCP connection instructions |
 

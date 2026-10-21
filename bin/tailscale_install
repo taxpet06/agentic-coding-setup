@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Install tailscale, or upgrade it to the latest stable. Fails loudly if the CLI still isn't there.
+set -euo pipefail
+
+if command -v apt-get >/dev/null; then
+  # Do the apt steps ourselves: tailscale's install.sh runs under `set -e`, so one unrelated
+  # broken apt source (e.g. a dead third-party repo) makes `apt-get update` fail and it quits before installing.
+  . /etc/os-release
+  base="https://pkgs.tailscale.com/stable/${ID}/${VERSION_CODENAME}"
+  sudo mkdir -p --mode=0755 /usr/share/keyrings
+  curl -fsSL "$base.noarmor.gpg" | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  curl -fsSL "$base.tailscale-keyring.list" | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+  sudo chmod 0644 /usr/share/keyrings/tailscale-archive-keyring.gpg /etc/apt/sources.list.d/tailscale.list
+  sudo apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/tailscale.list \
+    -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0   # refresh only the tailscale repo
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y tailscale tailscale-archive-keyring   # installs or upgrades
+else
+  curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+command -v tailscale >/dev/null || { echo "tailscale install failed: no tailscale CLI on PATH" >&2; exit 1; }
+tailscale version | head -1
