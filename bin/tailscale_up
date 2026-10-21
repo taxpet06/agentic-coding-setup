@@ -14,7 +14,11 @@ elif ! pgrep -x tailscaled >/dev/null; then
 fi
 
 # --ssh: tailscale serves SSH itself (no sshd or keys needed); --operator: later tailscale commands work without sudo
-sudo tailscale up --ssh --operator="$USER" "$@"
+if tailscale status >/dev/null 2>&1; then
+  sudo tailscale set --ssh --operator="$USER" "$@"   # already up: `up` would reject a changed hostname etc.
+else
+  sudo tailscale up --ssh --operator="$USER" "$@"
+fi
 
 ip=$(tailscale ip -4 | head -1)
 name=$(tailscale status --json | sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p' | head -1)
