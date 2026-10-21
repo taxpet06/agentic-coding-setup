@@ -27,7 +27,7 @@ for f in CLAUDE.md settings.json; do
   cp "$R/claude/$f" ~/.claude/$f
 done
 # hooks hardcode the source machine's node path and home; point them at this machine's
-sed -i "s#/usr/bin/node#$(command -v node)#g; s#/home/petros#$HOME#g" ~/.claude/settings.json
+sed -i "s#/home/petros/#$HOME/#g; s#/usr/bin/node#$(command -v node)#g" ~/.claude/settings.json   # home first + trailing slash, so a $HOME like /home/petros_x is not rewritten twice
 mkdir -p ~/.claude/hooks
 cp -a "$R/claude/skills/." ~/.claude/skills/
 cp -a "$R/agents-skills/." ~/.agents/skills/
@@ -54,9 +54,18 @@ cp -a "$R/codex/rules/." ~/.codex/rules/; cp -a "$R/codex/skills/." ~/.codex/ski
 # GSD generates config.toml; append only the portable settings once (full desktop config: codex/config.toml)
 grep -q 'agentic-coding-setup' ~/.codex/config.toml 2>/dev/null || { echo; cat "$R/codex/config.portable.toml"; } >> ~/.codex/config.toml
 grep -q '^model = ' ~/.codex/config.toml || sed -i '1i model = "gpt-5.6-luna"\nmodel_reasoning_effort = "medium"' ~/.codex/config.toml   # top-level keys must precede tables
-sed -i 's#/home/petros#'"$HOME"'#g' ~/.codex/hooks.json
+sed -i 's#/home/petros/#'"$HOME"'/#g' ~/.codex/hooks.json
+
+step "tailscale (install or update; needs sudo)"
+if [ -t 0 ] || sudo -n true 2>/dev/null; then
+  curl -fsSL https://tailscale.com/install.sh | sh   # installs, or upgrades to latest if already there
+else
+  echo "  no terminal for sudo: re-run ./bootstrap.sh in a terminal to install/update tailscale"
+fi
+install -m755 "$R/bin/tailscale_up" ~/.local/bin/tailscale_up
 
 step "manual logins still needed (tokens are never in this repo)"
 for c in "gh auth status" "claude auth status" "codex login status"; do $c >/dev/null 2>&1 || echo "  run: ${c%% status}"; done
+tailscale status >/dev/null 2>&1 || echo "  run: tailscale_up   (joins the tailnet with SSH enabled)"
 echo "  claude-personal / claude-school: log in once each (/login)"
 echo "  claude.ai connectors (Gmail, Drive, Notion, Higgsfield...) follow your claude.ai account automatically"

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Bring this machine onto the tailnet with Tailscale SSH on, so other tailnet devices can `ssh` in.
+# Extra args go to `tailscale up`, e.g. `tailscale_up --hostname=wsl-laptop`.
+set -euo pipefail
+
+command -v tailscale >/dev/null || { echo "tailscale is not installed; run ./bootstrap.sh in a terminal first"; exit 1; }
+
+# start the daemon (WSL without systemd: run it in the background)
+if [ "$(ps -p 1 -o comm=)" = systemd ]; then
+  sudo systemctl enable --now tailscaled
+elif ! pgrep -x tailscaled >/dev/null; then
+  sudo sh -c 'nohup tailscaled --state=/var/lib/tailscale/tailscaled.state >/var/log/tailscaled.log 2>&1 &'
+  sleep 2
+fi
+
+# --ssh: tailscale serves SSH itself (no sshd or keys needed); --operator: later tailscale commands work without sudo
+sudo tailscale up --ssh --operator="$USER" "$@"
+
+ip=$(tailscale ip -4 | head -1)
+name=$(tailscale status --json | sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p' | head -1)
+echo
+echo "Ready. From another device on your tailnet:"
+echo "  ssh $USER@${name:-$ip}"
+echo "  ssh $USER@$ip"
