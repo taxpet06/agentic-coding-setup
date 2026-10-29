@@ -18,7 +18,7 @@ have claude || { curl -fsSL https://claude.ai/install.sh | bash; }
 have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 have npm && { have codex || npm i -g @openai/codex; npm i -g defuddle vercel; }
 for b in codex defuddle vercel; do [ -x "$(npm prefix -g 2>/dev/null)/bin/$b" ] && ln -sfn "$(npm prefix -g)/bin/$b" ~/.local/bin/$b; done
-have uv && uv tool install graphifyy >/dev/null 2>&1 || true
+have uv && uv tool install 'graphifyy[pdf]' >/dev/null 2>&1 || true   # [pdf] = pypdf, needed to extract PDF text
 
 step "claude shared config -> ~/.claude (existing files backed up once)"
 mkdir -p ~/.claude/skills ~/.local/bin ~/.agents/skills
@@ -45,6 +45,7 @@ have npx && npx -y get-shit-done-cc@latest --claude --codex --global
 
 step "MCP servers (user scope; claude-personal/school copy these on launch)"
 claude mcp get dali-os >/dev/null 2>&1 || claude mcp add --scope user --transport http dali-os https://os.dali.dartmouth.edu/mcp
+have npx && { claude mcp get airtable >/dev/null 2>&1 || claude mcp add --scope user airtable -- npx -y airtable-mcp-server; }   # needs AIRTABLE_API_KEY exported in ~/.bashrc
 echo "see mcp.md for the OAuth logins and the linkedin MCP"
 
 step "codex"

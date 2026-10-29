@@ -31,7 +31,7 @@ Fix this **without inventing tokens** by expanding the query against the actual 
 $(cat graphify-out/.graphify_python) -c "
 import json, re
 from pathlib import Path
-data = json.loads(Path('graphify-out/graph.json').read_text())
+data = json.loads(Path('graphify-out/graph.json').read_text(encoding='utf-8'))
 vocab = set()
 for n in data['nodes']:
     for c in re.findall(r'[^\W\d_]+', n.get('label','') or '', re.UNICODE):
@@ -40,7 +40,7 @@ for n in data['nodes']:
             t = p.lower()
             if 3 <= len(t) <= 30:
                 vocab.add(t)
-Path('graphify-out/.vocab.txt').write_text('\n'.join(sorted(vocab)))
+Path('graphify-out/.vocab.txt').write_text('\n'.join(sorted(vocab)), encoding='utf-8')
 print(f'vocab: {len(vocab)} tokens')
 "
 ```
@@ -80,10 +80,9 @@ If the CLI is unavailable, load `graphify-out/graph.json` and run the traversal 
 $(cat graphify-out/.graphify_python) -c "
 import sys, json
 from networkx.readwrite import json_graph
-import networkx as nx
 from pathlib import Path
 
-data = json.loads(Path('graphify-out/graph.json').read_text())
+data = json.loads(Path('graphify-out/graph.json').read_text(encoding='utf-8'))
 G = json_graph.node_link_graph(data, edges='links')
 
 question = 'QUESTION'
@@ -105,7 +104,6 @@ if not start_nodes:
     sys.exit(0)
 
 subgraph_nodes = set()
-subgraph_edges = []
 
 if mode == 'dfs':
     # DFS: follow one path as deep as possible before backtracking.
@@ -121,7 +119,6 @@ if mode == 'dfs':
         for neighbor in G.neighbors(node):
             if neighbor not in visited:
                 stack.append((neighbor, depth + 1))
-                subgraph_edges.append((node, neighbor))
 else:
     # BFS: explore all neighbors layer by layer up to depth 3.
     frontier = set(start_nodes)
@@ -132,9 +129,19 @@ else:
             for neighbor in G.neighbors(n):
                 if neighbor not in subgraph_nodes:
                     next_frontier.add(neighbor)
-                    subgraph_edges.append((n, neighbor))
         subgraph_nodes.update(next_frontier)
         frontier = next_frontier
+
+# Traversal chooses the nodes; collect relationships separately so seed edges,
+# cycles, and cross-links are not lost just because both endpoints were visited.
+# Taking the induced subgraph also keeps edges to nodes beyond the depth limit
+# out of the result. data=True retains each edge's own attributes, including
+# distinct parallel relationships in a MultiGraph.
+subgraph_edges = [
+    (u, v, edge_data)
+    for u, v, edge_data in G.subgraph(subgraph_nodes).edges(data=True)
+    if u != v
+]
 
 # Token-budget aware output: rank by relevance, cut at budget (~4 chars/token)
 token_budget = BUDGET  # default 2000
@@ -151,10 +158,9 @@ lines = [f'Traversal: {mode.upper()} | Start: {[G.nodes[n].get(\"label\",n) for 
 for nid in ranked_nodes:
     d = G.nodes[nid]
     lines.append(f'  NODE {d.get(\"label\", nid)} [src={d.get(\"source_file\",\"\")} loc={d.get(\"source_location\",\"\")}]')
-for u, v in subgraph_edges:
+for u, v, edge_data in subgraph_edges:
     if u in subgraph_nodes and v in subgraph_nodes:
-        _raw = G[u][v]; d = next(iter(_raw.values()), {}) if isinstance(G, nx.MultiGraph) else _raw
-        lines.append(f'  EDGE {G.nodes[u].get(\"label\",u)} --{d.get(\"relation\",\"\")} [{d.get(\"confidence\",\"\")}]--> {G.nodes[v].get(\"label\",v)}')
+        lines.append(f'  EDGE {G.nodes[u].get(\"label\",u)} --{edge_data.get(\"relation\",\"\")} [{edge_data.get(\"confidence\",\"\")}]--> {G.nodes[v].get(\"label\",v)}')
 
 output = '\n'.join(lines)
 if len(output) > char_budget:
@@ -172,6 +178,14 @@ $(cat graphify-out/.graphify_python) -m graphify save-result --question "ORIGINA
 ```
 
 Replace `ORIGINAL_QUESTION` with the user's verbatim question, `ANSWER` with your full answer text (containing the expanded-token trace), `NODE1 NODE2` with the list of node labels you cited. This closes the feedback loop: the next `--update` will extract this Q&A as a node in the graph.
+
+**Work memory (self-improving loop).** Add an `--outcome` so future sessions learn from this one — append `--outcome useful|dead_end|corrected` to the `save-result` command (and `--correction "the right answer"` when correcting):
+
+- `useful` — the cited nodes answered the question well (they become *preferred sources*).
+- `dead_end` — the question/path led nowhere; don't re-derive it next time.
+- `corrected` — the saved answer was wrong; `--correction` records what was right.
+
+At the **start** of graph work, refresh and read the lessons: run `graphify reflect --if-stale` (cheap, deterministic, no LLM; `--if-stale` makes it a no-op when `LESSONS.md` is already newer than every input, e.g. when the git hook just refreshed it), then read `graphify-out/reflections/LESSONS.md`. It lists **preferred sources** (start there), **known dead ends** (skip them), and prior **corrections**. Running `reflect` yourself keeps the lessons current even without the git hook installed; if the post-commit hook *is* installed, `--if-stale` means your session-start run costs almost nothing.
 
 ---
 
@@ -192,7 +206,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from pathlib import Path
 
-data = json.loads(Path('graphify-out/graph.json').read_text())
+data = json.loads(Path('graphify-out/graph.json').read_text(encoding='utf-8'))
 G = json_graph.node_link_graph(data, edges='links')
 
 a_term = 'NODE_A'
@@ -260,7 +274,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from pathlib import Path
 
-data = json.loads(Path('graphify-out/graph.json').read_text())
+data = json.loads(Path('graphify-out/graph.json').read_text(encoding='utf-8'))
 G = json_graph.node_link_graph(data, edges='links')
 
 term = 'NODE_NAME'
