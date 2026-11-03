@@ -5,3 +5,4 @@ history.jsonl
 *.sqlite
 .env*
 *.pre-setup
+*.bak
