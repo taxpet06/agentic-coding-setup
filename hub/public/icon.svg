@@ -1,10 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#131416"/>
-  <g stroke="#3a3c42" stroke-width="14" stroke-linecap="round">
-    <path d="M256 268L150 178M256 268L362 178M256 268V392"/>
+  <!-- Hub: a prompt in orbit. The ring is the three agent accounts (personal, school, Codex); the prompt is the work. -->
+  <rect id="ground" width="512" height="512" fill="#131416"/>
+  <g id="icon" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g id="accounts" stroke-width="42">
+      <path id="personal" d="M282.0 92.0A166 166 0 0 1 411.0 315.5" stroke="#eaa847"/>
+      <path id="school" d="M385.0 360.5A166 166 0 0 1 127.0 360.5" stroke="#ab95f5"/>
+      <path id="codex" d="M101.0 315.5A166 166 0 0 1 230.0 92.0" stroke="#45c9b8"/>
+    </g>
+    <path id="prompt" d="M190 190L256 256L190 322" stroke="#ececea" stroke-width="46"/>
+    <path id="cursor" d="M286 322H330" stroke="#67a8ff" stroke-width="46"/>
   </g>
-  <circle cx="150" cy="178" r="40" fill="#eaa847"/>
-  <circle cx="362" cy="178" r="40" fill="#ab95f5"/>
-  <circle cx="256" cy="392" r="40" fill="#45c9b8"/>
-  <circle cx="256" cy="268" r="30" fill="#ececea"/>
 </svg>
