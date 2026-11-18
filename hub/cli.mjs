@@ -187,10 +187,12 @@ WantedBy=default.target
   const dns = (() => { try { return JSON.parse(run('tailscale', ['status', '--json']).out).Self.DNSName.replace(/\.$/, ''); } catch { return null; } })();
   const out = run('tailscale', ['serve', '--bg', String(PORT)], { timeout: 20_000 });
   if (run('tailscale', ['serve', 'status']).out.includes(String(PORT))) {
-    console.log(`Hub app: https://${dns}/`);
+    console.log(`Hub app: https://${dns}/   (any device signed in to your tailnet)`);
+    console.log(`  On this computer: http://localhost:${PORT}/`);
     console.log('  iPhone: open it in Safari → Share → Add to Home Screen, then open Hub from the Home Screen and turn on notifications.');
   } else {
-    console.log("Hub agent is running, but tailscale serve isn't on yet (the iPhone app needs it for HTTPS and notifications):");
+    console.log(`Hub agent is running: http://localhost:${PORT}/ on this computer.`);
+    console.log("tailscale serve isn't on yet (other devices and the iPhone app need it for HTTPS and notifications):");
     console.log((out.out + '\n' + out.err).trim().split('\n').slice(0, 6).map(l => `  ${l}`).join('\n'));
     console.log('  Enable HTTPS once at https://login.tailscale.com/admin/dns (HTTPS Certificates → Enable), then run: hub app');
   }

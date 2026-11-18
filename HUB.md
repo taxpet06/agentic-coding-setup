@@ -18,6 +18,13 @@ Two ways in from your iPhone, both built on the same index, graphs and git sync:
 
 Commands (Linux, macOS and Windows; `hub` is `hub/cli.mjs`): `hub app [stop|logs]`, `hub scan [--graph]`, `hub find <word>`, `hub pull`, `hub push <repo>...`, `hub serve`, `hub selftest`. State lives in `~/.claude/hub/`: `projects.tsv` (index), `threads/`, `accounts.json` (limits and usage), `push.json` (VAPID keys and phone subscriptions, mode 600), `failed` (sync problems shown to the next session).
 
+## Use it from a computer
+
+- **On the machine running the hub**: `hub app`, then open http://localhost:7787 in any browser. A browser on the machine itself gets in without Tailscale (`HUB_LOCAL=0` in the service turns that off on a shared computer).
+- **From any other computer**: sign it in to your tailnet (install Tailscale), then open `https://<machine>.<tailnet>.ts.net` (here: https://dell-linux.tailb356b0.ts.net). Every hub on the tailnet shows up in the sidebar, whichever one you open.
+- **Not on the public internet, on purpose**: the hub runs agents that can edit and push your code, so it only answers your Tailscale identity or the local machine. Tailscale Funnel traffic is refused.
+- **Desktop layout** (1000px and wider): machines, account meters and threads in a sidebar, the open screen beside it. Enter sends, Shift+Enter is a new line. Chrome, Edge and Firefox can install it as an app (address bar → Install) and show its notifications.
+
 ## How the Hub app works
 
 ```

@@ -462,3 +462,37 @@ details.changes .sum { flex: 1; min-width: 0; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .band.running::after, .band.ask::after { animation: none; background-position: 50% 0; } }
 .opt .ol b { font-size: 15px; font-weight: 600; }
 .qq-set.multi .opt .mark { border-radius: 5px; }
+
+/* ---------- desktop: sidebar of machines and threads, the screen beside it ---------- */
+#side { display: none; }
+body.wide { --side: 316px; }
+body.wide #side { display: flex; flex-direction: column; gap: 6px; position: fixed; inset: 0 auto 0 0; width: var(--side); z-index: 8; overflow-y: auto;
+  padding: 10px 10px 24px; background: var(--panel); border-right: 1px solid var(--seam); overscroll-behavior: contain; }
+body.wide #app { margin-left: var(--side); }
+body.wide .composer { left: var(--side); }
+body.wide .toast { left: calc(50% + var(--side) / 2); }
+body.wide .screen { max-width: 800px; padding-left: 28px; padding-right: 28px; }
+body.wide .bar { margin-left: -28px; margin-right: -28px; padding-left: 16px; padding-right: 16px; }
+body.wide .band { margin-left: -28px; margin-right: -28px; padding-left: 28px; padding-right: 28px; }
+body.wide .composer .wrap { max-width: 744px; }
+body.wide .msg-user { max-width: 72%; }
+.side-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); text-decoration: none; }
+.brand img { width: 28px; height: 28px; border-radius: 7px; }
+.side-dev { display: grid; gap: 4px; padding: 4px 0; }
+.side-dev + .side-dev { border-top: 1px solid var(--seam); padding-top: 8px; }
+.side-dev-row { display: flex; align-items: center; gap: 9px; min-height: 36px; padding: 0 8px; border-radius: 8px; color: var(--text); text-decoration: none; }
+.side-dev-row .n { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-dev-row .m, .side-t .m { font-size: 12px; color: var(--text-2); }
+.side-dev-row[aria-current="page"] { background: var(--press); }
+.side-dev.off .side-dev-row { color: var(--text-3); }
+.side-dev .meters { margin: 0 8px 6px; }
+.side-threads { display: grid; gap: 1px; }
+.side-t { display: flex; align-items: flex-start; gap: 9px; padding: 7px 8px; border-radius: 8px; color: var(--text); text-decoration: none; }
+.side-t > .dot { margin-top: 6px; width: 7px; height: 7px; }
+.side-t .b { display: grid; min-width: 0; }
+.side-t .t { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-t.on { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.side-t.on .t { font-weight: 600; }
+.side-empty { font-size: 13px; color: var(--text-3); margin: 2px 8px 6px; }
+@media (hover: hover) { .side-dev-row:hover, .side-t:not(.on):hover { background: var(--press); } }

@@ -82,6 +82,9 @@ async function authorized(req) {
   if (ip === '127.0.0.1' || ip === '::1') {
     // via `tailscale serve`: it stamps the tailnet login. Funnel (public) traffic carries none and is refused.
     if (!me.login) return true; // no tailscale at all: local use only
+    // a browser on this machine (http://localhost:7787). tailscale serve keeps the *.ts.net Host, so proxied and
+    // Funnel traffic never looks like this, and a DNS-rebinding page carries its own Host. HUB_LOCAL=0 turns it off.
+    if (process.env.HUB_LOCAL !== '0' && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(req.headers.host ?? '')) return true;
     return req.headers['tailscale-user-login'] === me.login;
   }
   return !!me.login && (await whoisLogin(ip)) === me.login; // a peer hub, straight over the tailnet

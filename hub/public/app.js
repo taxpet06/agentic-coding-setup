@@ -326,7 +326,7 @@ function newThreadForm(id, projects, project, onClose) {
   text, att.strip, att.input, opts,
   h('div', { class: 'new-acts' }, h('button', { class: 'attach', type: 'button', 'aria-label': 'Attach images', onclick: att.open }, icon('image')), h('span', { class: 'grow' }),
     h('button', { class: 'btn quiet', type: 'button', onclick: onClose }, 'Cancel'), send));
-  text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) f.requestSubmit(); });
+  text.addEventListener('keydown', e => sendKey(e, f));
   return f;
 }
 
@@ -506,7 +506,7 @@ function thread(id, tid) {
   } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, att.strip, att.input, h('div', { class: 'box' }, attach, input, stop, send)));
   const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, innerHeight * 0.4)}px`; };
   input.addEventListener('input', () => { grow(); paintSend(); });
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) form.requestSubmit(); });
+  input.addEventListener('keydown', e => sendKey(e, form));
   // jump back to the newest message after scrolling up
   const jump = h('button', { class: 'jump', type: 'button', 'aria-label': 'Jump to latest', hidden: true, onclick: () => scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }) }, icon('chev', 'sm'));
   mount(h('main', { class: 'screen has-composer thread' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}`, label: id }, mid: h('div', { class: 'tt' }, titleEl, where), end: [archive], always: true }), band, turnsEl), jump, form);
@@ -694,6 +694,44 @@ function thread(id, tid) {
   every(1000, () => t?.status === 'running' && paintBand());
 }
 
+// ---------- desktop: machines and threads in a sidebar beside whichever screen is open ----------
+const wide = matchMedia('(min-width: 1000px)');
+const side = document.getElementById('side');
+const at = { dev: null, tid: null }; // what the main pane shows
+const sideThreads = {}; // device -> its threads, as last fetched
+async function paintSide(fetch = true) {
+  document.body.classList.toggle('wide', wide.matches);
+  side.hidden = !wide.matches;
+  if (!wide.matches) return;
+  try {
+    if (fetch || !devicesCache) devicesCache = await api('devices');
+    const hubs = devicesCache.filter(d => d.hub || d.lastInfo).sort((a, b) => b.self - a.self || b.online - a.online || a.id.localeCompare(b.id));
+    const cur = at.dev ?? hubs[0]?.id;
+    if (fetch && cur && hubs.find(d => d.id === cur)?.hub) sideThreads[cur] = await api(`${dev(cur)}threads`).catch(() => sideThreads[cur] ?? []);
+    side.replaceChildren(
+      h('div', { class: 'side-head' }, h('a', { href: '#/', class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), 'Hub'),
+        cur ? h('a', { class: 'navbtn', href: `#/d/${encodeURIComponent(cur)}?new`, 'aria-label': `New thread on ${cur}`, title: 'New thread' }, icon('plus')) : null),
+      ...hubs.map(d => {
+        const info = d.info ?? d.lastInfo, open = d.id === cur;
+        return h('section', { class: `side-dev${open ? ' open' : ''}${d.hub ? '' : ' off'}` },
+          h('a', { class: 'side-dev-row', href: `#/d/${encodeURIComponent(d.id)}`, 'aria-current': open && !at.tid ? 'page' : null },
+            h('span', { class: `dot${info?.running ? ' run' : d.hub ? ' on' : ''}` }), h('span', { class: 'n' }, d.id),
+            h('span', { class: 'm num' }, d.hub ? (info?.running ? `${info.running} running` : '') : 'offline')),
+          open && d.hub && info ? meters(info) : null,
+          open ? h('div', { class: 'side-threads' }, (sideThreads[d.id] ?? []).length
+            ? sideThreads[d.id].map(t => h('a', { class: `side-t${t.id === at.tid ? ' on' : ''}`, href: `#/d/${encodeURIComponent(d.id)}/t/${t.id}`, 'aria-current': t.id === at.tid ? 'page' : null },
+                h('span', { class: `dot ${t.waiting ? 'ask' : t.status === 'running' ? 'run' : t.lastStatus === 'failed' ? 'bad' : ''}`, style: t.waiting || t.status === 'running' || t.lastStatus === 'failed' ? {} : { background: `var(--${t.provider ?? 'text-3'})` } }),
+                h('span', { class: 'b' }, h('span', { class: 't' }, t.title), h('span', { class: 'm num' }, [short(t.project?.name), t.waiting ? 'needs you' : t.status === 'running' ? 'working' : null, ago(t.updatedAt)].filter(Boolean).join(' · ')))))
+            : h('p', { class: 'side-empty' }, d.hub ? 'No threads yet.' : 'Comes back when the machine does.')) : null);
+      }));
+  } catch (e) { side.replaceChildren(h('div', { class: 'error' }, `Couldn’t reach the hub: ${e.message}`)); }
+}
+wide.addEventListener('change', () => paintSide());
+setInterval(() => document.visibilityState === 'visible' && wide.matches && paintSide(), 5000);
+// desktop keyboards: Enter sends, Shift+Enter is a new line (on a phone, Return stays a new line)
+const enterSends = matchMedia('(hover: hover) and (pointer: fine)').matches;
+const sendKey = (e, form) => { if (e.key === 'Enter' && !e.isComposing && (e.metaKey || e.ctrlKey || (enterSends && !e.shiftKey))) { e.preventDefault(); form.requestSubmit(); } };
+
 // ---------- router ----------
 function route() {
   for (const f of cleanups) f();
@@ -702,6 +740,8 @@ function route() {
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
   const params = new URLSearchParams(query ?? '');
   scrollTo(0, 0);
+  at.dev = parts[0] === 'd' ? parts[1] ?? null : null; at.tid = parts[2] === 't' ? parts[3] ?? null : null;
+  paintSide(!devicesCache || !sideThreads[at.dev]);
   if (parts[0] === 'd' && parts[1] && parts[2] === 't' && parts[3]) return thread(parts[1], parts[3]);
   if (parts[0] === 'd' && parts[1]) return device(parts[1], params);
   return home();
