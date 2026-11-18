@@ -7,7 +7,8 @@ export const CLAUDE = new Set(['personal', 'school']);
 export const MODELS = ['claude-opus-5-5', 'claude-fable-5-2', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']; // same levels for claude --effort and codex model_reasoning_effort
 // Claude --permission-mode values that make sense unattended ('manual' would just deny every prompt)
-export const MODES = ['auto', 'acceptEdits', 'plan', 'bypassPermissions'];
+// 'manual' asks: each permission prompt goes to the phone through approve.mjs
+export const MODES = ['auto', 'manual', 'acceptEdits', 'plan', 'bypassPermissions'];
 // Codex has no permission modes; the sandbox is the nearest thing
 export const codexSandbox = mode => mode === 'plan' ? 'read-only' : mode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write';
 const NEAR = 0.9; // 5-hour window utilization where an account starts yielding to one with more room
@@ -90,7 +91,7 @@ export function toolView(name, i = {}) {
   return null;
 }
 const resultText = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x.text ?? '').join('\n') : '';
-const toolDetail = i => cut(String(i?.command ?? i?.file_path ?? i?.notebook_path ?? i?.pattern ?? i?.url ?? i?.query ??
+export const toolDetail = i => cut(String(i?.command ?? i?.file_path ?? i?.notebook_path ?? i?.pattern ?? i?.url ?? i?.query ??
   i?.description ?? i?.prompt ?? i?.skill ?? ''), 200);
 
 // One line of `claude -p --output-format stream-json --verbose --include-partial-messages` -> events
@@ -150,8 +151,10 @@ export function parseCodex(line) {
   }
 }
 
+const HANDOFF = 'Hub handoff: this conversation continued with another assistant account while you were away. Here is what happened since you last saw it; the working tree already has those changes.';
+export const REWOUND = 'Hub: the user edited or retried a message, so this is a fresh session. Here is the conversation before it; files on disk keep any changes made since.';
 // turns: [{ role: 'user'|'assistant', provider?, text }]. The catch-up text for an agent that last saw turns[0..seen).
-export function contextFor(turns, seen) {
+export function contextFor(turns, seen, intro = HANDOFF) {
   const missed = turns.slice(seen).filter(t => t.text);
   if (!missed.length) return '';
   const lines = [];
@@ -162,7 +165,6 @@ export function contextFor(turns, seen) {
     budget -= s.length;
     lines.unshift(s);
   }
-  return '[Hub handoff: this conversation continued with another assistant account while you were away. ' +
-    'Here is what happened since you last saw it; the working tree already has those changes.]\n\n' + lines.join('\n\n') +
+  return `[${intro}]\n\n` + lines.join('\n\n') +
     '\n\n[End of handoff. The new request follows.]\n\n';
 }

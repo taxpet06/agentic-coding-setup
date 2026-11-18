@@ -23,6 +23,9 @@ const PUBLIC = path.join(import.meta.dirname, 'public');
 const PERMISSION_MODE = process.env.HUB_PERMISSION_MODE || 'auto';
 const TURN_TIMEOUT = Number(process.env.HUB_TURN_TIMEOUT_MIN || 120) * 60_000;
 const VERSION = 1;
+const UPLOADS = path.join(STATE, 'uploads');
+const APPROVAL_TOKEN = crypto.randomBytes(24).toString('hex'); // lets approve.mjs, spawned by our own Claude turns, reach /api/approvals
+const IMG = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 // systemd starts us with a bare PATH; add the user's tool dirs after whatever PATH says
 for (const d of ['.local/bin', '.n/bin', '.local/node/bin']) if (!process.env.PATH.split(':').includes(path.join(HOME, d))) process.env.PATH += `:${path.join(HOME, d)}`;
 fs.mkdirSync(path.join(THREADS, 'archive'), { recursive: true });
@@ -144,7 +147,7 @@ function saveThread(t, now = false) {
 const summary = t => {
   const last = t.turns.at(-1);
   const lastText = [...t.turns].reverse().flatMap(x => (x.items ?? []).filter(i => i.kind === 'text')).at(0)?.text ?? '';
-  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, mode: t.mode ?? null, queued: t.queue?.length ?? 0, updatedAt: t.updatedAt,
+  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, mode: t.mode ?? null, queued: t.queue?.length ?? 0, waiting: (last?.items ?? []).filter(i => i.kind === 'approval' && i.status === 'pending').length, updatedAt: t.updatedAt,
     createdAt: t.createdAt, lastStatus: last?.status ?? null, preview: lastText.slice(0, 160), turns: t.turns.length };
 };
 const asTranscript = turns => turns.map(t => t.role === 'user' ? { role: 'user', text: t.text }
@@ -154,6 +157,7 @@ const asTranscript = turns => turns.map(t => t.role === 'user' ? { role: 'user',
 const watchers = new Map();
 function emit(id, ev) { for (const res of watchers.get(id) ?? []) res.write(`data: ${JSON.stringify(ev)}\n\n`); }
 function addItem(t, turn, item) { turn.items.push(item); saveThread(t); emit(t.id, { type: 'item', turnId: turn.id, item }); }
+function patchItem(t, turn, item) { saveThread(t); emit(t.id, { type: 'patch', turnId: turn.id, index: turn.items.indexOf(item), item }); }
 function setTurn(t, turn) { saveThread(t); emit(t.id, { type: 'turn', turn: { ...turn, items: undefined }, thread: summary(t) }); }
 
 // ---------- projects ----------
@@ -183,7 +187,7 @@ function claudeResume(t, profile, cwd) {
   return s.id;
 }
 
-function runProvider(p, t, turn, prompt, cwd, resumeId) {
+function runProvider(p, t, turn, prompt, cwd, resumeId, images = []) {
   const isClaude = lib.CLAUDE.has(p);
   let cmd, args, env = process.env;
   if (isClaude) {
@@ -194,12 +198,18 @@ function runProvider(p, t, turn, prompt, cwd, resumeId) {
     const model = t.model || process.env.HUB_CLAUDE_MODEL;
     if (model) args.push('--model', model);
     if (t.effort) args.push('--effort', t.effort);
+    // anything that would ask for permission is relayed to the phone (see approve.mjs); --mcp-config takes several values, so it goes last
+    const hub = { command: process.execPath, args: [path.join(import.meta.dirname, 'approve.mjs')],
+      env: { HUB_URL: `http://127.0.0.1:${PORT}`, HUB_TOKEN: APPROVAL_TOKEN, HUB_THREAD: t.id, HUB_TURN: turn.id } };
+    args.push('--permission-prompt-tool', 'mcp__hub__approve', '--mcp-config', JSON.stringify({ mcpServers: { hub } }));
+    env.MCP_TOOL_TIMEOUT = '3600000'; // a prompt may wait an hour for an answer
   } else {
     cmd = 'codex';
     const cfg = ['-c', `sandbox_mode="${lib.codexSandbox(t.mode || PERMISSION_MODE)}"`, '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true'];
     if (t.effort) cfg.push('-c', `model_reasoning_effort="${t.effort}"`);
     if (cwd === HUB_DIR) cfg.push('-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(HOME)}]`);
-    args = resumeId ? ['exec', 'resume', resumeId, '--json', '--skip-git-repo-check', ...cfg, '-'] : ['exec', '--json', '--skip-git-repo-check', ...cfg, '-'];
+    const img = images.flatMap(f => ['--image', f]); // before --json: --image takes several values
+    args = resumeId ? ['exec', 'resume', resumeId, ...img, '--json', '--skip-git-repo-check', ...cfg, '-'] : ['exec', ...img, '--json', '--skip-git-repo-check', ...cfg, '-'];
   }
   return new Promise(resolve => {
     const child = spawn(cmd, args, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -219,7 +229,7 @@ function runProvider(p, t, turn, prompt, cwd, resumeId) {
         else if (ev.kind === 'toolResult') {
           const i = turn.items.findIndex(x => x.kind === 'tool' && x.id === ev.id);
           if (i < 0) { if (ev.tool) addItem(t, turn, { ...ev.tool, output: ev.output, failed: ev.failed || undefined }); }
-          else { Object.assign(turn.items[i], { output: ev.output, failed: ev.failed || undefined }); saveThread(t); emit(t.id, { type: 'patch', turnId: turn.id, index: i, item: turn.items[i] }); }
+          else { Object.assign(turn.items[i], { output: ev.output, failed: ev.failed || undefined }); patchItem(t, turn, turn.items[i]); }
         }
         else if (ev.kind === 'delta') emit(t.id, { type: 'delta', turnId: turn.id, text: ev.text });
         else if (ev.kind === 'usage') { noteUsage(p, ev); if (ev.status === 'rejected') limited = true; }
@@ -258,7 +268,13 @@ async function runTurn(t, turn, force) {
   const job = running.get(t.id);
   const cwd = t.project?.path ?? HUB_DIR;
   const transcript = asTranscript(t.turns.slice(0, -2)); // everything before this exchange
-  const userText = t.turns.at(-2).text;
+  const userTurn = t.turns.at(-2);
+  const images = (userTurn.images ?? []).map(n => path.join(UPLOADS, t.id, n));
+  // Claude opens attachments with its Read tool; Codex gets them as --image
+  const claudeText = userTurn.text + (images.length ? `\n\n[Attached ${images.length === 1 ? 'image' : 'images'}: open with the Read tool: ${images.join(', ')}]` : '');
+  turn.base ??= await gitHead(cwd);
+  baseUntracked.set(turn.id, new Set(turn.base ? await untracked(cwd) : []));
+  const intro = t.rewound ? lib.REWOUND : undefined;
   const tried = [];
   let prevLimited = false;
   for (;;) {
@@ -280,15 +296,17 @@ async function runTurn(t, turn, force) {
     // work this turn already did on an account that ran out, so the next one doesn't start over
     const partial = turn.items.filter(i => i.kind === 'text').map(i => i.text).join('\n\n');
     // (a resumed Claude session already holds its own partial work in the copied transcript)
-    const carry = lib.contextFor(transcript, seen) + (partial && (family === 'codex' || !resumeId)
+    const carry = lib.contextFor(transcript, seen, intro) + (partial && (family === 'codex' || !resumeId)
       ? `[The previous assistant was cut off by a usage limit partway through this request. Its progress:]\n${partial}\n\n` : '');
     // Claude gets the stack-router nudge from its UserPromptSubmit hook; Codex has no Claude hooks, so it rides along here
     const hint = family !== 'codex' ? '' : (cwd === HUB_DIR ? '[You are in the hub repo. Projects on this machine: ~/.claude/hub/projects.tsv; `hub find <word>` looks one up.]\n' : '')
       + '[Before acting on a coding, UI, debugging or prose task, read ~/.claude/skills/stack-router/SKILL.md and follow its routing: each skill it names is at ~/.claude/skills/<name>/SKILL.md.]\n\n';
-    let res = await runProvider(p, t, turn, hint + carry + userText, cwd, resumeId);
+    const userText = family === 'codex' ? userTurn.text : claudeText;
+    const imgs = family === 'codex' ? images : [];
+    let res = await runProvider(p, t, turn, hint + carry + userText, cwd, resumeId, imgs);
     if (res.noSession && resumeId) { // transcript file went missing: start a fresh session with the whole history
       t.sessions[family] = null;
-      res = await runProvider(p, t, turn, hint + lib.contextFor(transcript, 0) + userText, cwd, null);
+      res = await runProvider(p, t, turn, hint + lib.contextFor(transcript, 0, intro) + userText, cwd, null, imgs);
     }
     if (job.stopped) { if (t.sessions[family]) t.sessions[family].seen = t.turns.length; turn.status = 'stopped'; return; } // the session saw this request even if cut short
     if (res.limited) {
@@ -317,14 +335,30 @@ function parseSettings(p) {
 
 // Every message goes through the thread's queue: it runs now if the thread is idle, otherwise after the current
 // turn ends (done, failed or stopped), in order. Settings travel with each message and apply when it starts.
-function enqueue(t, p) {
-  const text = str(p.text)?.trim();
-  if (!text) throw new HttpError(400, 'Message is empty.');
+function enqueue(t, p, { front = false, images } = {}) {
   if (p.provider && !lib.PROVIDERS.includes(p.provider)) throw new HttpError(400, `Unknown account ${p.provider}`);
   t.queue ??= [];
   if (t.queue.length >= 20) throw new HttpError(429, 'Twenty messages are already queued here.');
-  t.queue.push({ id: crypto.randomUUID(), text, provider: p.provider || null, settings: parseSettings(p), at: Date.now() });
+  const settings = parseSettings(p);
+  if (!str(p.text)?.trim() && !p.images?.length && !images?.length) throw new HttpError(400, 'Message is empty.');
+  images ??= saveImages(t, p.images);
+  const text = str(p.text)?.trim() || 'Look at the attached image.';
+  const q = { id: crypto.randomUUID(), text, provider: p.provider || null, settings, images, at: Date.now() };
+  if (front) t.queue.unshift(q); else t.queue.push(q);
   drain(t);
+}
+// attachments arrive as base64 from the app (already downscaled there); they live in STATE/uploads/<thread>/
+function saveImages(t, list) {
+  if (list == null) return [];
+  if (!Array.isArray(list) || list.length > 6) throw new HttpError(400, 'Attach up to six images.');
+  const bufs = list.map(x => {
+    const ext = IMG[x?.type], b = typeof x?.data === 'string' ? Buffer.from(x.data, 'base64') : null;
+    if (!ext || !b?.length) throw new HttpError(400, 'Images must be JPEG, PNG, WebP or GIF.');
+    if (b.length > 10_000_000) throw new HttpError(413, 'Each image must be under 10 MB.');
+    return [ext, b];
+  });
+  fs.mkdirSync(path.join(UPLOADS, t.id), { recursive: true });
+  return bufs.map(([ext, b]) => { const n = `${crypto.randomUUID()}.${ext}`; fs.writeFileSync(path.join(UPLOADS, t.id, n), b); return n; });
 }
 function queueChanged(t) { saveThread(t, true); emit(t.id, { type: 'queue', queue: t.queue }); }
 function drain(t) {
@@ -332,15 +366,15 @@ function drain(t) {
   const q = t.queue.shift();
   Object.assign(t, q.settings);
   queueChanged(t);
-  startTurn(t, q.text, q.provider || undefined);
+  startTurn(t, q.text, q.provider || undefined, q.images);
 }
 
-function startTurn(t, text, force) {
+function startTurn(t, text, force, images = []) {
   if (running.has(t.id)) throw new HttpError(409, 'This thread is still working. Stop it first, or wait.');
   if (!text?.trim()) throw new HttpError(400, 'Message is empty.');
   if (force && !lib.PROVIDERS.includes(force)) throw new HttpError(400, `Unknown account ${force}`);
   const now = Date.now();
-  t.turns.push({ id: crypto.randomUUID(), role: 'user', text: text.trim(), at: now });
+  t.turns.push({ id: crypto.randomUUID(), role: 'user', text: text.trim(), at: now, ...(images.length ? { images } : {}) });
   if (t.auto && !t.project) {
     const m = lib.matchProject(text, projects());
     if (m) t.project = { name: m.name, path: m.path };
@@ -359,10 +393,17 @@ function startTurn(t, text, force) {
     catch (e) { turn.status = 'failed'; addItem(t, turn, { kind: 'note', tone: 'error', text: `Hub error: ${e.message}` }); log('turn crashed', e); }
     finally {
       running.delete(t.id);
-      turn.endedAt = Date.now(); t.status = 'idle';
-      setTurn(t, turn); saveThread(t, true);
+      turn.endedAt = Date.now(); t.status = 'idle'; delete t.rewound;
+      for (const a of approvals.values()) if (a.t === t) a.done(false, 'expired');
       const where = t.project?.path ?? HUB_DIR;
-      spawn(hubBin(), ['push', where], { detached: true, stdio: 'ignore' }).unref(); // commit + push the repo (own repos only)
+      const ch = await changesSince(where, turn.base, baseUntracked.get(turn.id)).catch(() => null);
+      baseUntracked.delete(turn.id);
+      const card = ch?.files.length ? { kind: 'changes', ...ch, push: 'pending' } : null;
+      if (card) addItem(t, turn, card);
+      setTurn(t, turn); saveThread(t, true);
+      // commit + push the repo (own repos only), then say on the card whether it made it
+      const pushed = new Promise(r => { const c = spawn(hubBin(), ['push', where], { detached: true, stdio: 'ignore' }); c.on('close', r); c.on('error', r); c.unref(); });
+      if (card) pushed.then(() => pushState(where)).then(st => { Object.assign(card, st); patchItem(t, turn, card); }).catch(() => {});
       const last = turn.items.filter(i => i.kind === 'text' || i.kind === 'note').at(-1)?.text ?? '';
       const proj = (t.project?.name ?? 'hub').split('/').pop();
       const verb = { done: 'done', failed: 'failed', stopped: 'stopped' }[turn.status] ?? turn.status;
@@ -371,6 +412,61 @@ function startTurn(t, text, force) {
       try { drain(t); } catch (e) { log("queue failed", e); } // the next queued message, if any
     }
   })();
+}
+
+// ---------- git: what a turn changed, and whether it got pushed ----------
+const git = async (cwd, args) => (await run('git', ['-C', cwd, ...args], { timeout: 15_000, maxBuffer: 16_000_000 })).stdout;
+const gitHead = cwd => git(cwd, ['rev-parse', 'HEAD']).then(s => s.trim(), () => null);
+const untracked = cwd => git(cwd, ['ls-files', '--others', '--exclude-standard']).then(s => s.split('\n').filter(Boolean), () => []);
+const baseUntracked = new Map(); // turnId -> untracked files that were already there when it started
+// ponytail: diffs the work tree against HEAD at turn start, so a pull that lands mid-turn counts too; per-turn stash snapshots if that ever matters
+async function changesSince(cwd, base, before = new Set()) {
+  if (!base) return null;
+  const files = (await git(cwd, ['diff', '--numstat', base])).split('\n').filter(Boolean).map(l => {
+    const [a, d, ...rest] = l.split('\t');
+    return { path: rest.join('\t'), add: a === '-' ? null : Number(a), del: d === '-' ? null : Number(d) };
+  });
+  for (const f of await untracked(cwd)) {
+    if (before.has(f)) continue;
+    const text = await fsp.readFile(path.join(cwd, f), 'utf8').catch(() => null);
+    files.push({ path: f, add: text == null || text.length > 2_000_000 ? null : text.split('\n').length - (text.endsWith('\n') ? 1 : 0), del: 0, new: true });
+  }
+  return { files: files.slice(0, 200), more: Math.max(0, files.length - 200), add: files.reduce((n, f) => n + (f.add ?? 0), 0), del: files.reduce((n, f) => n + (f.del ?? 0), 0) };
+}
+async function pushState(cwd) {
+  const head = (await git(cwd, ['rev-parse', '--short', 'HEAD']).catch(() => '')).trim() || null;
+  const ahead = await git(cwd, ['rev-list', '--count', '@{u}..HEAD']).catch(() => null);
+  if (ahead == null) return { push: 'local', head }; // no upstream, nothing to push to
+  const dirty = (await git(cwd, ['status', '--porcelain']).catch(() => 'x')).trim();
+  return { push: Number(ahead) === 0 && !dirty ? 'pushed' : 'unpushed', head };
+}
+
+// ---------- approvals: Claude's permission prompts, answered from the phone ----------
+const approvals = new Map(); // id -> { t, done(allow, status) }
+async function askApproval(req, res) {
+  const ip = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  const tok = Buffer.from(String(req.headers['x-hub-token'] ?? ''));
+  if ((ip !== '127.0.0.1' && ip !== '::1') || tok.length !== APPROVAL_TOKEN.length || !crypto.timingSafeEqual(tok, Buffer.from(APPROVAL_TOKEN)))
+    return json(res, 403, { error: 'Not a hub turn.' });
+  const p = await body(req);
+  const t = threads.get(p.thread), turn = t?.turns.find(x => x.id === p.turn);
+  if (!t || turn?.status !== 'running') return json(res, 200, { allow: false, message: 'That turn is no longer running.' });
+  const tool = str(p.tool, 200) ?? 'tool', input = p.input && typeof p.input === 'object' ? p.input : {};
+  const item = { kind: 'approval', id: crypto.randomUUID(), name: tool, detail: lib.toolDetail(input), view: lib.toolView(tool, input) ?? undefined, status: 'pending' };
+  addItem(t, turn, item);
+  emit(t.id, { type: 'turn', turn: { ...turn, items: undefined }, thread: summary(t) });
+  notify({ title: `${(t.project?.name ?? 'hub').split('/').pop()} · needs you`, body: `Allow ${tool}: ${item.detail}`.slice(0, 160), tag: `${t.id}-ask`, url: `/#/d/${me.id}/t/${t.id}` }).catch(() => {});
+  const answer = await new Promise(resolve => {
+    const done = (allow, status) => {
+      if (item.status !== 'pending') return;
+      approvals.delete(item.id); item.status = status; patchItem(t, turn, item);
+      emit(t.id, { type: 'turn', turn: { ...turn, items: undefined }, thread: summary(t) });
+      resolve({ allow, message: status === 'denied' ? 'The user denied this from the Hub app.' : undefined });
+    };
+    approvals.set(item.id, { t, done });
+    res.on('close', () => done(false, 'expired')); // the agent went away (stopped, timed out)
+  });
+  if (!res.writableEnded && !res.destroyed) json(res, 200, answer);
 }
 
 // ---------- push notifications ----------
@@ -422,9 +518,9 @@ async function devices(fresh = false) {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 const json = (res, code, v) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(v)); };
-async function body(req) {
+async function body(req, max = 1_000_000) {
   const chunks = []; let n = 0;
-  for await (const c of req) { n += c.length; if (n > 1_000_000) throw new HttpError(413, 'Request too large'); chunks.push(c); }
+  for await (const c of req) { n += c.length; if (n > max) throw new HttpError(413, 'Request too large'); chunks.push(c); }
   if (!chunks.length) return {};
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'Body is not JSON'); }
 }
@@ -456,14 +552,14 @@ async function local(req, res, parts) {
   }
   if (a === 'threads' && !b && m === 'GET') return json(res, 200, [...threads.values()].map(summary).sort((x, y) => y.updatedAt - x.updatedAt));
   if (a === 'threads' && !b && m === 'POST') {
-    const p = await body(req);
+    const p = await body(req, 30_000_000);
     const text = str(p.text);
     let project = null;
     if (p.project) {
       project = projects().find(x => x.name === p.project);
       if (!project) throw new HttpError(404, `No project ${p.project} on ${me.id}`);
     }
-    const t = { id: crypto.randomUUID(), title: (text ?? '').trim().replace(/\s+/g, ' ').slice(0, 80) || 'New thread', auto: !project,
+    const t = { id: crypto.randomUUID(), title: (text ?? '').trim().replace(/\s+/g, ' ').slice(0, 80) || (p.images?.length ? 'Image' : 'New thread'), auto: !project,
       project: project ? { name: project.name, path: project.path } : null, createdAt: Date.now(), updatedAt: Date.now(),
       status: 'idle', provider: null, model: null, effort: null, mode: null, queue: [], sessions: { claude: null, codex: null }, turns: [] };
     threads.set(t.id, t);
@@ -479,11 +575,41 @@ async function local(req, res, parts) {
     await fsp.rename(path.join(THREADS, `${t.id}.json`), path.join(THREADS, 'archive', `${t.id}.json`)).catch(() => {});
     return json(res, 200, { ok: true });
   }
-  if (t && c === 'messages' && m === 'POST') { enqueue(t, await body(req)); return json(res, 202, summary(t)); }
+  if (t && c === 'messages' && m === 'POST') { enqueue(t, await body(req, 30_000_000)); return json(res, 202, summary(t)); }
   if (t && c === 'queue' && parts[3] && m === 'DELETE') { // drop one queued message
     t.queue = (t.queue ?? []).filter(q => q.id !== parts[3]);
     queueChanged(t);
     return json(res, 200, { queue: t.queue });
+  }
+  if (t && c === 'approvals' && parts[3] && m === 'POST') {
+    const a = approvals.get(parts[3]);
+    if (!a || a.t !== t) throw new HttpError(404, 'That request already has an answer.');
+    const allow = !!(await body(req)).allow;
+    a.done(allow, allow ? 'allowed' : 'denied');
+    return json(res, 200, { ok: true });
+  }
+  if (t && c === 'rewind' && m === 'POST') { // edit or retry: drop this message and everything after it, then send it again
+    if (running.has(t.id)) throw new HttpError(409, 'Stop this turn before editing or retrying.');
+    const p = await body(req, 30_000_000);
+    const i = t.turns.findIndex(x => x.id === p.turnId && x.role === 'user');
+    if (i < 0) throw new HttpError(404, 'No such message.');
+    const orig = t.turns[i];
+    const text = p.text === undefined ? orig.text : str(p.text)?.trim();
+    if (!text) throw new HttpError(400, 'Message is empty.');
+    const removed = t.turns.splice(i); // kept on disk, not shown
+    fs.appendFileSync(path.join(THREADS, 'archive', `${t.id}.rewound.jsonl`), JSON.stringify({ at: Date.now(), turns: removed }) + '\n');
+    t.sessions = { claude: null, codex: null }; t.rewound = true; // a fresh session gets the earlier turns as a recap
+    if (i === 0) t.title = text.replace(/\s+/g, ' ').slice(0, 80);
+    enqueue(t, { ...p, text }, { front: true, images: orig.images ?? [] });
+    return json(res, 202, summary(t));
+  }
+  if (t && c === 'images' && parts[3] && m === 'GET') {
+    if (!/^[a-f0-9-]{36}\.(jpg|png|webp|gif)$/.test(parts[3])) throw new HttpError(404, 'Not found');
+    const data = await fsp.readFile(path.join(UPLOADS, t.id, parts[3])).catch(() => null);
+    if (!data) throw new HttpError(404, 'Not found');
+    const type = Object.keys(IMG).find(k => IMG[k] === path.extname(parts[3]).slice(1));
+    res.writeHead(200, { 'content-type': type, 'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
+    return res.end(data);
   }
   if (t && c === 'stop' && m === 'POST') {
     const job = running.get(t.id);
@@ -527,6 +653,7 @@ async function serveStatic(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.url === '/api/approvals' && req.method === 'POST') return await askApproval(req, res); // our own turns, by token
     if (!(await authorized(req))) return json(res, 403, { error: 'Only the tailnet owner can use this hub.' });
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       // CSRF: another site open on the phone could otherwise post a text/plain form that parses as JSON

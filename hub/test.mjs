@@ -100,3 +100,11 @@ test('contextFor hands over only what the agent has not seen', () => {
   assert.doesNotMatch(c, /make a button/);
   assert.ok(contextFor([{ role: 'user', text: 'x'.repeat(100_000) }], 0).length < 30_000, 'bounded');
 });
+
+test('modes map to a Codex sandbox; a rewound session gets its own recap intro', async () => {
+  const { codexSandbox, MODES, REWOUND } = await import('./lib.mjs');
+  assert.deepEqual(MODES.map(codexSandbox), ['workspace-write', 'workspace-write', 'workspace-write', 'read-only', 'danger-full-access']);
+  const ctx = contextFor([{ role: 'user', text: 'hi' }], 0, REWOUND);
+  assert.ok(ctx.startsWith(`[${REWOUND}]`) && ctx.includes('User: hi'));
+  assert.ok(contextFor([{ role: 'user', text: 'hi' }], 0).startsWith('[Hub handoff'), 'account switches keep the handoff wording');
+});

@@ -37,7 +37,8 @@ It's not one vendor's remote. Hub spans machines and three agent accounts, keeps
 - Projects: from `~/.claude/hub/projects.tsv` per device (`hub scan`). Names are paths relative to home.
 - Threads: a conversation pinned to one device and one project (or "auto": the hub picks the project from the first message).
 - Providers: `claude-personal`, `claude-school` (Claude Code `-p` with stream-json) and `codex` (`codex exec --json`). Usage per Claude account comes from `rate_limit_event` (5-hour window utilization and reset time).
-- Agents run unattended. Each thread picks a permission mode (auto, accept edits, plan only, bypass), which maps to a Codex sandbox (plan → read-only, bypass → full access, otherwise workspace-write). Approval prompts are not relayed in v1 *(open decision)*.
+- Agents run unattended by default. Each thread picks a permission mode (auto, ask me, accept edits, plan only, bypass), which maps to a Codex sandbox (plan → read-only, bypass → full access, otherwise workspace-write). Claude's permission prompts are relayed to the phone as Allow/Deny cards with a notification.
+- Messages can carry images, be edited or retried (rewinds the thread into a fresh session with a recap), and every turn ends with a summary of the files it changed and whether they were pushed.
 - Notifications: Web Push, which iOS only allows for a PWA added to the Home Screen over HTTPS.
 
 ## Evidence on Hand

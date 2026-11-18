@@ -126,6 +126,7 @@ a.row:active, button.row:active { background: var(--press); }
 .dot.on { background: var(--ok); }
 .dot.run { background: var(--run); animation: breathe 1.6s ease-in-out infinite; }
 .dot.bad { background: var(--bad); }
+.dot.ask { background: var(--warn); animation: breathe 1.2s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: 0.35; } }
 
 /* ---------- account meters: the live account glows, a spent one goes red ---------- */
@@ -185,6 +186,9 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .new .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .field.span2 { grid-column: 1 / -1; }
 .new textarea { min-height: 96px; }
+.new-acts { display: flex; gap: 8px; align-items: center; }
+.new-acts .grow { flex: 1; }
+.new .thumbs { padding-top: 2px; }
 .hint { font-size: 14px; color: var(--text-2); margin: 0; }
 .hint code, .prose code { font-family: var(--mono); font-size: 0.88em; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
 
@@ -199,9 +203,15 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .band .what b { color: var(--text); font-weight: 600; }
 .band.running .what b { color: var(--run); }
 .band.failed .what b { color: var(--bad); }
+.band.ask .what b { color: var(--warn); }
 
-.msg-user { margin: 18px 0 10px auto; max-width: 86%; width: fit-content; background: var(--user); padding: 10px 14px; border-radius: 18px 18px 6px 18px;
-  white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-user-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin: 18px 0 10px; }
+.msg-user { max-width: 86%; width: fit-content; background: var(--user); padding: 10px 14px; border-radius: 18px 18px 6px 18px;
+  white-space: pre-wrap; overflow-wrap: anywhere; cursor: default; }
+.msg-user-wrap .acts { margin: -4px -8px 0 0; display: none; }
+.msg-user-wrap .acts.always, .msg-user-wrap.show .acts { display: flex; }
+.imgs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 86%; }
+.imgs img { display: block; width: 112px; height: 112px; object-fit: cover; border-radius: 12px; background: var(--panel-2); }
 .turn { margin-bottom: 8px; }
 .who-line { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); margin: 4px 0 6px; }
 .who-line .how { color: var(--text-3); }
@@ -277,6 +287,38 @@ svg.i.xs { width: 11px; height: 11px; stroke-width: 3; }
 .act { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 8px; border: 0; border-radius: 8px; background: none; color: var(--text-3); font-size: 13px; }
 .act:active { background: var(--press); }
 
+/* a permission prompt waiting on the phone, then its verdict */
+.approval { background: var(--panel); border-radius: 14px; padding: 12px; margin: 4px 0 12px; display: grid; gap: 10px;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--warn) 55%, transparent); }
+.approval .hd { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.approval .hd svg.i { color: var(--warn); }
+.approval .hd .what { color: var(--text-3); font-size: 13px; margin-left: auto; }
+.approval .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.approval:not(.pending) { box-shadow: none; padding: 10px 12px; gap: 8px; }
+.approval:not(.pending) .hd { font-size: 14px; }
+.approval.allowed .hd svg.i { color: var(--ok); }
+.approval.denied .hd svg.i, .approval.expired .hd svg.i { color: var(--text-3); }
+.approval:not(.pending) pre.term { max-height: 120px; }
+
+/* what a turn changed, and whether it reached GitHub */
+details.changes { background: var(--panel); border-radius: 12px; margin: 4px 0 10px; font-size: 14px; }
+details.changes > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; }
+details.changes > summary .chev { width: 14px; height: 14px; color: var(--text-3); transition: transform 160ms var(--ease); }
+details.changes[open] > summary .chev { transform: rotate(90deg); }
+details.changes .sum { flex: 1; min-width: 0; font-weight: 600; }
+.changes .plus { color: var(--ok); }
+.changes .minus { color: var(--bad); }
+.changes .ps { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 12.5px; color: var(--text-2); }
+.changes .ps.pushed { color: var(--ok); }
+.changes .ps.unpushed { color: var(--warn); }
+.changes .files { padding: 0 12px 8px 34px; }
+.changes .f { display: flex; align-items: baseline; gap: 8px; min-height: 26px; font-family: var(--mono); font-size: 12.5px; }
+.changes .f .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; }
+.changes .f .dir { color: var(--text-3); }
+.changes .f .new { font-family: var(--font); font-size: 11px; font-weight: 600; color: var(--ok); flex: none; }
+.changes .f .c { flex: none; }
+.changes .f.more { color: var(--text-3); font-family: var(--font); }
+
 /* the handoff seam: who took over and why */
 .seam { display: flex; align-items: center; gap: 10px; margin: 14px 0; font-size: 13px; color: var(--text-2); }
 .seam::before, .seam::after { content: ""; flex: 1; height: 1px; background: var(--seam-strong); }
@@ -298,7 +340,20 @@ svg.i.xs { width: 11px; height: 11px; stroke-width: 3; }
   border-top: 1px solid var(--seam);
 }
 .composer .wrap { max-width: 720px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
-.composer .in { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+.composer .in { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: end; }
+.composer .in:has(.attach[hidden]) { grid-template-columns: 1fr auto; }
+.attach { display: grid; place-items: center; width: 40px; height: 44px; border: 0; border-radius: 12px; background: none; color: var(--text-2); }
+.attach:active { background: var(--press); }
+.thumbs { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 2px; scrollbar-width: none; }
+.thumb { position: relative; flex: none; }
+.thumb img { display: block; width: 60px; height: 60px; object-fit: cover; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--seam); }
+.thumb .rm { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--bg); background: var(--text); color: var(--bg);
+  display: grid; place-items: center; padding: 0; }
+.thumb .rm::after { content: ""; position: absolute; inset: -10px; } /* 44px touch target around a 24px dot */
+.editing { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 2px 0 12px; border-radius: 12px; font-size: 13.5px; color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.editing > span { flex: 1; min-width: 0; }
+.editing svg.i { color: var(--accent); }
 .composer textarea { min-height: 44px; max-height: 40dvh; border-radius: 22px; padding: 11px 16px; }
 .composer .send { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; transition: transform 120ms var(--ease), background-color 160ms var(--ease); }
 .composer .send.stop { background: var(--text); color: var(--bg); }
@@ -314,8 +369,8 @@ svg.i.xs { width: 11px; height: 11px; stroke-width: 3; }
 .queue .q { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 2px 0 12px; border-radius: 12px; background: var(--panel); font-size: 14px; }
 .queue .k { flex: none; font-size: 12px; font-weight: 600; color: var(--text-3); }
 .queue .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.queue .qb { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 10px; background: none; color: var(--text-2); }
-.queue .qb:active { background: var(--press); }
+.qb { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 10px; background: none; color: var(--text-2); }
+.qb:active { background: var(--press); }
 
 /* ---------- states ---------- */
 .empty { padding: 28px 16px; text-align: center; color: var(--text-2); }
@@ -332,6 +387,6 @@ svg.i.xs { width: 11px; height: 11px; stroke-width: 3; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 @media (hover: hover) {
-  a.row:hover, button.row:hover, .step > summary:hover, .act:hover, .queue .qb:hover, .composer .opts > summary:hover { background: var(--press); }
+  a.row:hover, button.row:hover, .step > summary:hover, .attach:hover, details.changes > summary:hover, .act:hover, .qb:hover, .composer .opts > summary:hover { background: var(--press); }
   .navbtn:hover { background: var(--press); }
 }

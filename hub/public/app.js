@@ -7,7 +7,7 @@ const SHORT = { personal: 'Personal', school: 'School', codex: 'Codex' };
 const MODELS = { 'claude-opus-5-5': 'Opus 5.5', 'claude-fable-5-2': 'Fable 5.2', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5' };
 const EFFORTS = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
 // keep in step with lib.mjs MODES
-const MODES = { auto: 'Auto mode', acceptEdits: 'Accept edits', plan: 'Plan only', bypassPermissions: 'Bypass permissions' };
+const MODES = { auto: 'Auto mode', manual: 'Ask me', acceptEdits: 'Accept edits', plan: 'Plan only', bypassPermissions: 'Bypass permissions' };
 
 // ---------- tiny DOM kit (text always goes in as text nodes; only md() output is HTML, and it escapes) ----------
 function h(tag, attrs, ...kids) {
@@ -257,8 +257,8 @@ async function device(id, params) {
   load(); every(5000, load);
 }
 function threadRow(id, t) {
-  const st = t.status === 'running' ? 'run' : t.lastStatus === 'failed' ? 'bad' : '';
-  const stWord = t.status === 'running' ? 'working' : { failed: 'failed', stopped: 'stopped', interrupted: 'interrupted' }[t.lastStatus] ?? '';
+  const st = t.waiting ? 'ask' : t.status === 'running' ? 'run' : t.lastStatus === 'failed' ? 'bad' : '';
+  const stWord = t.waiting ? 'needs you' : t.status === 'running' ? 'working' : { failed: 'failed', stopped: 'stopped', interrupted: 'interrupted' }[t.lastStatus] ?? '';
   return h('a', { class: 'row', href: `#/d/${encodeURIComponent(id)}/t/${t.id}` },
     h('span', { class: `dot ${st}`, style: st ? {} : { background: `var(--${t.provider ?? 'text-3'})` } }),
     h('div', { class: 'body' },
@@ -300,21 +300,53 @@ function newThreadForm(id, projects, project, onClose) {
   const set = settingSelects();
   const text = h('textarea', { placeholder: project ? `What should happen in ${short(project)}?` : 'e.g. fix the camera jitter in battlefield', rows: 4, 'aria-label': 'Message' });
   const send = h('button', { class: 'btn', type: 'submit' }, icon('send', 'sm'), 'Start');
+  const att = attacher();
   const f = h('form', { class: 'new', onsubmit: async e => {
     e.preventDefault();
-    if (!text.value.trim()) return text.focus();
+    if (!text.value.trim() && !att.count()) return text.focus();
     send.disabled = true;
     try {
       const t = await api(`${dev(id)}threads`, { method: 'POST', body: { text: text.value, project: proj.value || undefined, provider: prov.value || undefined,
-        model: set.model.value, effort: set.effort.value, mode: set.mode.value } });
+        model: set.model.value, effort: set.effort.value, mode: set.mode.value, images: att.take() } });
       location.hash = `#/d/${encodeURIComponent(id)}/t/${t.id}`;
     } catch (err) { toast(err.message); send.disabled = false; }
   } },
   h('div', { class: 'two' }, field('Project', proj, 'span2'), field('Account', prov), field('Permissions', set.mode), field('Model', set.model), field('Effort', set.effort)),
-  text,
-  h('div', { style: { display: 'flex', gap: '8px', 'justify-content': 'flex-end' } }, h('button', { class: 'btn quiet', type: 'button', onclick: onClose }, 'Cancel'), send));
+  text, att.strip, att.input,
+  h('div', { class: 'new-acts' }, h('button', { class: 'btn quiet', type: 'button', onclick: att.open }, icon('image', 'sm'), 'Image'), h('span', { class: 'grow' }),
+    h('button', { class: 'btn quiet', type: 'button', onclick: onClose }, 'Cancel'), send));
   text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) f.requestSubmit(); });
   return f;
+}
+
+// ---------- image attachments: downscaled on the phone, sent as base64 ----------
+async function shrink(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 1800 / Math.max(bmp.width, bmp.height)); // a 12 MP photo becomes a few hundred KB; screenshots stay readable
+  const c = Object.assign(document.createElement('canvas'), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.86));
+  const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+  return { type: 'image/jpeg', data, url: URL.createObjectURL(blob) };
+}
+function attacher(onChange = () => {}) {
+  const files = [];
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async () => {
+    for (const f of input.files) {
+      if (files.length >= 6) { toast('Up to six images'); break; }
+      try { files.push(await shrink(f)); } catch { toast(`Couldn’t read ${f.name}`); }
+    }
+    input.value = ''; paint();
+  } });
+  const strip = h('div', { class: 'thumbs', hidden: true });
+  function paint() {
+    strip.hidden = !files.length;
+    strip.replaceChildren(...files.map((f, i) => h('div', { class: 'thumb' }, h('img', { src: f.url, alt: `Attachment ${i + 1}` }),
+      h('button', { type: 'button', class: 'rm', 'aria-label': `Remove attachment ${i + 1}`, onclick: () => { URL.revokeObjectURL(f.url); files.splice(i, 1); paint(); } }, icon('x', 'xs')))));
+    onChange();
+  }
+  return { input, strip, open: () => input.click(), count: () => files.length,
+    take: () => files.map(f => ({ type: f.type, data: f.data })), clear: () => { files.forEach(f => URL.revokeObjectURL(f.url)); files.length = 0; paint(); } };
 }
 
 // ---------- tool calls ----------
@@ -376,6 +408,28 @@ function todoCard(todos) {
     h('ul', {}, todos.map(x => h('li', { class: x.status }, h('span', { class: 'box', 'aria-hidden': 'true' }, x.status === 'completed' ? icon('check', 'xs') : null),
       h('span', {}, x.text), x.status !== 'pending' ? h('span', { class: 'vh' }, x.status === 'completed' ? ' (done)' : ' (in progress)') : null))));
 }
+function copyButton(text) {
+  const b = h('button', { class: 'act', type: 'button', onclick: async () => {
+    try { await navigator.clipboard.writeText(text); b.replaceChildren(icon('check', 'sm'), 'Copied'); setTimeout(() => b.replaceChildren(icon('copy', 'sm'), 'Copy'), 1600); } catch { toast('Couldn’t copy'); }
+  } }, icon('copy', 'sm'), 'Copy');
+  return b;
+}
+// what the turn changed in its repo, and whether hub push got it to GitHub
+function changesCard(it) {
+  const n = it.files.length + (it.more ?? 0);
+  const push = { pending: [h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Pushing'], pushed: [icon('check', 'sm'), `Pushed${it.head ? ` ${it.head}` : ''}`],
+    unpushed: ['Not pushed'], local: ['Local only'] }[it.push] ?? [];
+  const dir = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '';
+  return h('details', { class: 'changes', open: it.files.length <= 4 },
+    h('summary', {}, icon('chev', 'chev'), h('span', { class: 'sum num' }, `${n} ${n === 1 ? 'file' : 'files'} changed `,
+      it.add ? h('span', { class: 'plus' }, `+${it.add}`) : null, it.del ? h('span', { class: 'minus' }, ` −${it.del}`) : null),
+      h('span', { class: `ps ${it.push}` }, push)),
+    h('div', { class: 'files' }, it.files.map(f => h('div', { class: 'f' },
+      h('span', { class: 'p' }, h('span', { class: 'dir' }, dir(f.path)), base(f.path)),
+      f.new ? h('span', { class: 'new' }, 'new') : null,
+      h('span', { class: 'num c' }, f.add ? h('span', { class: 'plus' }, `+${f.add}`) : null, f.del ? h('span', { class: 'minus' }, ` −${f.del}`) : null))),
+      it.more ? h('div', { class: 'f more' }, `${it.more} more`) : null));
+}
 const HIDDEN = new Set(['Skill', 'TodoWrite']); // drawn as the skill labels and the plan card instead
 
 // ---------- thread ----------
@@ -404,21 +458,37 @@ function thread(id, tid) {
   const queueEl = h('div', { class: 'queue', hidden: true });
   const input = h('textarea', { rows: 1, placeholder: 'Follow up…', 'aria-label': 'Message' });
   const send = h('button', { class: 'btn send', type: 'submit', 'aria-label': 'Send' }, icon('send'));
+  const att = attacher(() => paintSend());
+  const attach = h('button', { class: 'attach', type: 'button', 'aria-label': 'Attach images', onclick: att.open }, icon('image'));
+  // editing a sent message: sending replaces it and everything after it
+  let editing = null;
+  const editBar = h('div', { class: 'editing', hidden: true }, icon('edit', 'sm'), h('span', {}, 'Editing. The replies after this message will be replaced.'),
+    h('button', { type: 'button', class: 'qb', 'aria-label': 'Cancel editing', onclick: () => endEdit() }, icon('x', 'sm')));
+  function startEdit(turn) {
+    editing = turn; editBar.hidden = false; attach.hidden = true; att.clear();
+    input.value = turn.text; grow(); paintSend(); input.focus();
+  }
+  function endEdit() { editing = null; editBar.hidden = true; attach.hidden = false; input.value = ''; grow(); paintSend(); }
+  const rewind = async (turnId, text) => {
+    try { await api(`${dev(id)}threads/${tid}/rewind`, { method: 'POST', body: { turnId, text, model: set.model.value, effort: set.effort.value, mode: set.mode.value } }); return true; }
+    catch (e) { toast(e.message); return false; }
+  };
   let busy = false;
-  const stopMode = () => t?.status === 'running' && !input.value.trim();
+  const stopMode = () => t?.status === 'running' && !input.value.trim() && !att.count() && !editing;
   const form = h('form', { class: 'composer', onsubmit: async e => {
     e.preventDefault();
     if (busy) return;
     if (stopMode()) return stopTurn();
     const text = input.value.trim();
-    if (!text) return input.focus();
+    if (!text && !att.count()) return input.focus();
     busy = true; send.disabled = true;
-    try {
-      await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: set.model.value, effort: set.effort.value, mode: set.mode.value } });
-      input.value = ''; grow(); prov.value = ''; paintOpts(); opts.open = false;
+    if (editing) { if (text && await rewind(editing.id, text)) endEdit(); }
+    else try {
+      await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: set.model.value, effort: set.effort.value, mode: set.mode.value, images: att.take() } });
+      input.value = ''; grow(); att.clear(); prov.value = ''; paintOpts(); opts.open = false;
     } catch (err) { toast(err.message); }
     busy = false; send.disabled = false; paintSend();
-  } }, h('div', { class: 'wrap' }, opts, queueEl, h('div', { class: 'in' }, input, send)));
+  } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, att.strip, att.input, h('div', { class: 'in' }, attach, input, send)));
   const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, innerHeight * 0.4)}px`; };
   input.addEventListener('input', () => { grow(); paintSend(); });
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) form.requestSubmit(); });
@@ -435,7 +505,7 @@ function thread(id, tid) {
     send.classList.toggle('stop', s);
     send.setAttribute('aria-label', s ? 'Stop' : running ? 'Queue message' : 'Send');
     send.replaceChildren(icon(s ? 'stop' : 'send'));
-    input.placeholder = running ? 'Queue a follow-up…' : 'Follow up…';
+    input.placeholder = editing ? 'Edit your message' : running ? 'Queue a follow-up…' : 'Follow up…';
   }
   function paintQueue() {
     const q = t?.queue ?? [];
@@ -454,9 +524,10 @@ function thread(id, tid) {
     if (!t) return;
     const last = t.turns.at(-1);
     const running = t.status === 'running';
-    band.className = `band${running ? ' running' : last?.status === 'failed' ? ' failed' : ''}`;
+    const asks = (last?.items ?? []).filter(i => i.kind === 'approval' && i.status === 'pending').length;
+    band.className = `band${asks ? ' ask' : running ? ' running' : last?.status === 'failed' ? ' failed' : ''}`;
     const who = last?.provider ? SHORT[last.provider] : running ? 'picking an account' : '';
-    const word = running ? 'Working' : { done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' }[last?.status] ?? 'Idle';
+    const word = asks ? 'Needs you' : running ? 'Working' : { done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' }[last?.status] ?? 'Idle';
     const time = running ? dur(Date.now() - last.startedAt) : last?.endedAt ? (ago(last.endedAt) === 'now' ? 'just now' : `${ago(last.endedAt)} ago`) : '';
     const q = t.queue?.length ? `${t.queue.length} queued` : '';
     bandWhat.replaceChildren(h('b', {}, word), [who, time, q].filter(Boolean).map(s => ` · ${s}`).join(''));
@@ -465,7 +536,7 @@ function thread(id, tid) {
     paintSend();
   }
   function renderTurn(turn) {
-    if (turn.role === 'user') return h('div', { class: 'msg-user', 'data-id': turn.id }, turn.text);
+    if (turn.role === 'user') return userBubble(turn);
     const el = h('div', { class: 'turn', 'data-id': turn.id });
     // name whoever started the turn and how it ran; each handoff seam names who took over after that
     const first = turn.items.find(i => i.kind === 'seam')?.from ?? turn.provider;
@@ -485,6 +556,8 @@ function thread(id, tid) {
       else if (it.kind === 'seam') el.append(h('div', { class: 'seam', role: 'note' }, h('span', { class: 'lab' },
         h('span', { class: 'dot from', style: { '--cf': `var(--${it.from})` } }), '→', h('span', { class: 'dot to', style: { '--ct': `var(--${it.to})` } }),
         ` ${LABEL[it.to]} took over · ${it.reason}`)));
+      else if (it.kind === 'approval') el.append(approvalCard(it));
+      else if (it.kind === 'changes') el.append(changesCard(it));
       else if (it.kind === 'note') el.append(it.tone === 'error' ? h('div', {}, h('span', { class: 'stamp bad' }, 'Failed'), h('div', { class: 'note bad' }, it.text)) : h('p', { class: 'note' }, it.text));
     }
     flush(running);
@@ -493,13 +566,36 @@ function thread(id, tid) {
     if (turn.status === 'stopped') el.append(h('span', { class: 'stamp muted' }, 'Stopped'));
     if (turn.status === 'interrupted') el.append(h('div', {}, h('span', { class: 'stamp muted' }, 'Interrupted'), h('p', { class: 'note' }, 'The hub restarted during this turn. Send a follow-up to continue.')));
     const text = turn.items.filter(i => i.kind === 'text').map(i => i.text).join('\n\n');
-    if (!running && text) {
-      const copy = h('button', { class: 'act', type: 'button', onclick: async () => {
-        try { await navigator.clipboard.writeText(text); copy.replaceChildren(icon('check', 'sm'), 'Copied'); setTimeout(() => copy.replaceChildren(icon('copy', 'sm'), 'Copy'), 1600); } catch { toast('Couldn’t copy'); }
-      } }, icon('copy', 'sm'), 'Copy');
-      el.append(h('div', { class: 'acts' }, copy));
-    }
+    const isLast = t.turns.at(-1) === turn, asked = t.turns[t.turns.indexOf(turn) - 1];
+    if (!running && (text || (isLast && asked))) el.append(h('div', { class: 'acts' }, text ? copyButton(text) : null,
+      isLast && asked ? h('button', { class: 'act', type: 'button', onclick: async e => { e.currentTarget.disabled = true; await rewind(asked.id); } }, icon('refresh', 'sm'), 'Retry') : null));
     return el;
+  }
+  const imgUrl = n => `/api/${dev(id)}threads/${tid}/images/${n}`;
+  function userBubble(turn) {
+    const wrap = h('div', { class: 'msg-user-wrap', 'data-id': turn.id });
+    if (turn.images?.length) wrap.append(h('div', { class: 'imgs' }, turn.images.map((n, i) =>
+      h('a', { href: imgUrl(n), target: '_blank', rel: 'noopener', 'aria-label': `Attached image ${i + 1}` }, h('img', { src: imgUrl(n), alt: '', loading: 'lazy' })))));
+    const lastUser = t.turns.findLast(x => x.role === 'user') === turn;
+    // the newest message shows its actions; tap an older one to reveal them
+    wrap.append(h('div', { class: 'msg-user', role: 'button', tabindex: 0, 'aria-expanded': String(lastUser), onclick: () => { if (!lastUser) { wrap.classList.toggle('show'); } } }, turn.text),
+      h('div', { class: `acts end${lastUser ? ' always' : ''}` }, copyButton(turn.text),
+        h('button', { class: 'act', type: 'button', onclick: () => startEdit(turn) }, icon('edit', 'sm'), 'Edit')));
+    return wrap;
+  }
+  function approvalCard(it) {
+    const pending = it.status === 'pending';
+    const answer = allow => async e => {
+      const btns = [...e.currentTarget.parentNode.children];
+      btns.forEach(b => (b.disabled = true));
+      try { await api(`${dev(id)}threads/${tid}/approvals/${it.id}`, { method: 'POST', body: { allow } }); } catch (err) { toast(err.message); btns.forEach(b => (b.disabled = false)); }
+    };
+    const verdict = { allowed: 'Allowed', denied: 'Denied', expired: 'No answer' }[it.status];
+    return h('div', { class: `approval ${it.status}`, role: pending ? 'group' : 'note', 'aria-label': `Permission request: ${toolLabel(it.name)}` },
+      h('div', { class: 'hd' }, icon(pending ? 'shield' : it.status === 'allowed' ? 'check' : 'x', 'sm'), h('b', {}, pending ? `Allow ${toolLabel(it.name).toLowerCase()}?` : verdict),
+        !pending ? h('span', { class: 'what' }, toolLabel(it.name)) : null),
+      toolBody(it) ?? (it.detail ? h('pre', { class: 'term' }, it.detail) : null),
+      pending ? h('div', { class: 'btns' }, h('button', { class: 'btn quiet', type: 'button', onclick: answer(false) }, 'Deny'), h('button', { class: 'btn', type: 'button', onclick: answer(true) }, 'Allow')) : null);
   }
   const modelOf = (turn, p) => p && p !== 'codex' && turn.model ? MODELS[turn.model] : null;
   function repaintTurn(turn) {
