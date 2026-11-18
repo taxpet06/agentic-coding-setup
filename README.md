@@ -9,6 +9,8 @@ One repo for Claude Code (`~/.claude`, `claude-personal`, `claude-school`) and C
 | `agents-skills/` | `~/.agents/skills/` | expo/eas/emil/etc. |
 | `claude/bin/claude-profile` | `~/.local/bin/` | `claude-personal` / `claude-school` symlinks share skills, plugins, agents, settings, MCP from `~/.claude`; only login/history differ |
 | `bin/tailscale_up`, `bin/tailscale_install` | `~/.local/bin/` | `tailscale_up` installs/updates tailscale if missing (via `tailscale_install`), starts tailscaled, runs `tailscale up --ssh`, prints the `ssh` command. `bootstrap.sh` also runs `tailscale_install` when it can sudo |
+| (cloned, not stored) | `~/.agents/claude-animation-skills` | [animation skills](https://github.com/artemnovitckii/claude-animation-skills) (`/graph`, `/map-route`, `/stick-figure`, ...). `bootstrap.sh` clones/pulls it, links each skill into `~/.agents/skills` (Codex) and `~/.claude/skills` (Claude, shared by both profiles), runs `kit/setup.sh --voice` |
+| (cloned, not stored) | `~/.agents/fullstack-dev-skills` | [Jeffallan/claude-skills](https://github.com/Jeffallan/claude-skills): 67 language/framework experts (`python-pro`, `react-expert`, `the-fool`, ...), linked the same way. Its `commands/` workflows are not linked |
 | `codex/` | `~/.codex/` | `config.toml` is the desktop-app config for reference; `config.portable.toml` is appended on other machines |
 | `mcp.md` | n/a | MCP connection instructions |
 

@@ -34,6 +34,18 @@ cp -a "$R/agents-skills/." ~/.agents/skills/
 install -m755 "$R/claude/bin/claude-profile" ~/.local/bin/claude-profile
 for p in personal school; do ln -sfn claude-profile ~/.local/bin/claude-$p; done
 
+step "cloned skill packs: clone/pull, link each skills/<name> into ~/.agents/skills (Codex) and ~/.claude/skills (Claude)"
+skill_pack() {   # $1 = github owner/repo, $2 = dir under ~/.agents
+  local A=~/.agents/$2
+  [ -d $A/.git ] && git -C $A pull -q || git clone -q --depth 1 https://github.com/$1.git $A
+  for d in $A/skills/*/; do n=$(basename "$d"); ln -sfn "${d%/}" ~/.agents/skills/$n; ln -sfn ../../.agents/skills/$n ~/.claude/skills/$n; done
+}
+skill_pack artemnovitckii/claude-animation-skills claude-animation-skills   # /graph, /map-route, /stick-figure ...
+skill_pack Jeffallan/claude-skills fullstack-dev-skills                      # 67 language/framework experts
+A=~/.agents/claude-animation-skills
+# ponytail: needs ffmpeg + python3; --voice pulls ~1 GB of models (stick-figure / zach-d-films only), skipped if already there
+have ffmpeg && bash $A/kit/setup.sh --voice 2>&1 | tail -3 || echo "  MISSING ffmpeg: sudo apt install ffmpeg, then: bash $A/kit/setup.sh --voice"
+
 step "plugins + marketplaces"
 claude plugin marketplace add DietrichGebert/ponytail 2>&1 | tail -1
 claude plugin marketplace update 2>&1 | tail -1

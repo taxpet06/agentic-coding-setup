@@ -16,6 +16,7 @@ Decide once, at the top of a task. Match the most specific row; a task can match
 | SVG path/morph/vector motion specifically | `svg-animations` |
 | "What's this effect called?" | `animation-vocabulary` |
 | Chart, graph, dashboard, stat tile | `dataviz` |
+| Animated reel / short-form video (mp4, 9:16): growth stat, route, exploded view, explainer | `graph`, `map-route`, `breakdown`, `minimalistic-graphics`, `dan-koe`, `kurzgesagt`, `low-poly`, `minecraft` (quick, JSON spec); `stick-figure`, `zach-d-films` (full voiceover reels) |
 | **React Native / Expo — anything at all** | See [React Native / Expo](#react-native--expo) below |
 | "How does X work here?", "where does Y live?", architecture question | `graphify` (query the existing graph before grepping) |
 | Small fix, doc tweak, one-file change | `gsd-quick` |

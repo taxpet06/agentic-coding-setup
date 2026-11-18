@@ -17,6 +17,16 @@
             "command": "bash \"/home/petros/.claude/hooks/gsd-session-state.sh\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f '/home/petros/.claude/skills/impeccable/scripts/impeccable' ] || '/home/petros/.claude/skills/impeccable/scripts/impeccable' hook",
+            "timeout": 5,
+            "statusMessage": "Preparing build session"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -47,6 +57,17 @@
             "type": "command",
             "command": "bash \"/home/petros/.claude/hooks/gsd-phase-boundary.sh\"",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f '/home/petros/.claude/skills/impeccable/scripts/impeccable' ] || '/home/petros/.claude/skills/impeccable/scripts/impeccable' hook",
+            "timeout": 5,
+            "statusMessage": "Checking UI changes"
           }
         ]
       }
@@ -92,6 +113,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ ! -f '/home/petros/.claude/skills/impeccable/scripts/impeccable' ] || '/home/petros/.claude/skills/impeccable/scripts/impeccable' hook",
+            "timeout": 30,
+            "statusMessage": "Design deep pass"
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
@@ -112,7 +145,10 @@
   "effortLevel": "high",
   "modelSettings": {
     "claude-sonnet-5-5": {
-      "effortLevel": "low"
+      "effortLevel": "high"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "high"
     }
   },
   "tui": "fullscreen",
@@ -147,5 +183,6 @@
       "**Org-specific CLIs**: flyctl, tailscale, gsd-sdk, graphify (non-standard CLIs seen repeatedly in this project's transcripts)",
       "**Routine under petros/ prefix**: not established — no evidence of a user-namespace convention in this repo"
     ]
-  }
+  },
+  "description": "Impeccable design detector: immediate-tier checks after Edit/Write on UI files, full-rule deep pass on Stop."
 }
