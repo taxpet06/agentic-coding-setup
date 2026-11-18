@@ -69,6 +69,14 @@ grep -q 'agentic-coding-setup' ~/.codex/config.toml 2>/dev/null || { echo; cat "
 grep -q '^model = ' ~/.codex/config.toml || sed -i '1i model = "gpt-5.6-luna"\nmodel_reasoning_effort = "medium"' ~/.codex/config.toml   # top-level keys must precede tables
 sed -i 's#/home/petros/#'"$HOME"'/#g' ~/.codex/hooks.json
 
+step "project hub (see HUB.md): index repos, let hub sessions work anywhere under \$HOME"
+install -m755 "$R/bin/hub" ~/.local/bin/
+have jq || echo "  MISSING jq (hub hooks need it): sudo apt install jq"
+have tmux || echo "  MISSING tmux (hub serve needs it): sudo apt install tmux"
+# gitignored, machine-specific: phone sessions started in this repo may touch any repo in \$HOME
+mkdir -p "$R/.claude"; [ -f "$R/.claude/settings.local.json" ] || printf '{"permissions":{"additionalDirectories":["%s"]}}\n' "$HOME" > "$R/.claude/settings.local.json"
+~/.local/bin/hub scan
+
 step "tailscale (install or update; needs sudo)"
 install -m755 "$R/bin/tailscale_install" "$R/bin/tailscale_up" ~/.local/bin/
 if [ -t 0 ] || sudo -n true 2>/dev/null; then

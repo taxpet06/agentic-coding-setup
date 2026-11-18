@@ -26,3 +26,10 @@ echo
 echo "Ready. From another device on your tailnet:"
 echo "  ssh $USER@${name:-$ip}"
 echo "  ssh $USER@$ip"
+
+# phone: Remote Control session for the project hub, plus a background graph refresh
+hub=~/.local/bin/hub
+if [ -x $hub ]; then
+  $hub serve
+  setsid nohup $hub scan --graph >/dev/null 2>&1 </dev/null &
+fi

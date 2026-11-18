@@ -27,6 +27,15 @@
             "statusMessage": "Preparing build session"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/petros/.local/bin/hub hook-start",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -68,6 +77,16 @@
             "command": "[ ! -f '/home/petros/.claude/skills/impeccable/scripts/impeccable' ] || '/home/petros/.claude/skills/impeccable/scripts/impeccable' hook",
             "timeout": 5,
             "statusMessage": "Checking UI changes"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/petros/.local/bin/hub hook-touch",
+            "timeout": 5
           }
         ]
       }
@@ -122,6 +141,15 @@
             "command": "[ ! -f '/home/petros/.claude/skills/impeccable/scripts/impeccable' ] || '/home/petros/.claude/skills/impeccable/scripts/impeccable' hook",
             "timeout": 30,
             "statusMessage": "Design deep pass"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/petros/.local/bin/hub hook-stop",
+            "timeout": 10
           }
         ]
       }
