@@ -78,7 +78,8 @@ push() {
 serve() {
   if tmux has-session -t hub 2>/dev/null; then echo "hub already serving (tmux attach -t hub)"; return; fi
   local c=${HUB_CLAUDE:-$(command -v claude-personal || command -v claude)}
-  tmux new-session -d -s hub -c "$HUB_DIR" "$c remote-control --name hub --permission-mode auto; read -p 'remote-control exited, enter to close'"
+  git -C "$HUB_DIR" remote set-head origin -a >/dev/null 2>&1   # else remote sessions land on a generated branch
+  tmux new-session -d -s hub -c "$HUB_DIR" "$c remote-control --name hub --spawn same-dir --permission-mode auto; read -p 'remote-control exited, enter to close'"
   echo "hub serving: Claude iOS app -> Code -> session 'hub'   (watch: tmux attach -t hub)"
 }
 
