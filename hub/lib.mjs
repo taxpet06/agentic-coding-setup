@@ -90,6 +90,11 @@ export function toolView(name, i = {}) {
   if (name === 'TodoWrite') return { todos: (i.todos ?? []).slice(0, 30).map(t => ({ text: cut(String(t.content ?? ''), 200), status: t.status })) };
   return null;
 }
+// AskUserQuestion input, trimmed to what the app draws (Claude asks 1-4 questions with 2-4 options each)
+export const cleanQuestions = qs => qs.slice(0, 4).map(q => ({
+  question: cut(String(q?.question ?? ''), 500), header: cut(String(q?.header ?? ''), 40), multiSelect: !!q?.multiSelect,
+  options: (Array.isArray(q?.options) ? q.options : []).slice(0, 6).map(o => ({ label: cut(String(o?.label ?? ''), 120), description: cut(String(o?.description ?? ''), 300) })),
+})).filter(q => q.question);
 const resultText = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x.text ?? '').join('\n') : '';
 export const toolDetail = i => cut(String(i?.command ?? i?.file_path ?? i?.notebook_path ?? i?.pattern ?? i?.url ?? i?.query ??
   i?.description ?? i?.prompt ?? i?.skill ?? ''), 200);

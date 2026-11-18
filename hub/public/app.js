@@ -115,8 +115,7 @@ async function home() {
   const others = h('div');
   const sub = h('p', { class: 'subtitle num' }, 'Looking for machines on your tailnet…');
   const refresh = navIcon('refresh', 'Refresh', () => load(true));
-  mount(h('main', { class: 'screen' }, bar({ mid: 'Hub', end: [refresh] }), h('h1', { class: 'title' }, 'Hub'), sub, list, others, notifySection(),
-    h('p', { class: 'hint', style: { 'margin-top': '24px' } }, 'Each machine runs its own hub. To add one, run ', h('code', {}, 'hub app'), ' on it.')));
+  mount(h('main', { class: 'screen' }, bar({ mid: 'Hub', end: [refresh] }), h('h1', { class: 'title' }, 'Hub'), sub, list, notifySection(), others));
   async function load(fresh) {
     try {
       const ds = await api(`devices${fresh ? '?fresh=1' : ''}`);
@@ -126,16 +125,15 @@ async function home() {
       sub.textContent = `${hubs.filter(d => d.hub).length} of ${hubs.length} ${hubs.length === 1 ? 'machine' : 'machines'} online · ${running} running`;
       list.replaceChildren(h('div', { class: 'group' }, hubs.map(deviceRow)));
       const rest = ds.filter(d => !d.hub && !d.lastInfo);
-      others.replaceChildren(...(rest.length ? [h('h2', { class: 'section' }, 'Other devices on your tailnet'),
-        h('div', { class: 'group' }, rest.map(d => h('div', { class: 'row dim' }, h('span', { class: `dot${d.online ? ' on' : ''}` }),
-          h('div', { class: 'body' }, h('div', { class: 'name' }, d.id), h('div', { class: 'meta' }, `${d.os ?? ''} · ${d.online ? 'online, no hub' : 'offline'}`)))))] : []));
+      others.replaceChildren(h('p', { class: 'hint foot' }, 'To add a machine, run ', h('code', {}, 'hub app'), ' on it.',
+        rest.length ? ` ${rest.length} other ${rest.length === 1 ? 'device' : 'devices'} on your tailnet ${rest.length === 1 ? 'isn’t' : 'aren’t'} running it.` : ''));
     } catch (e) { list.replaceChildren(h('div', { class: 'error' }, `Couldn't reach the hub: ${e.message}`)); }
   }
   load(); every(6000, () => load());
 }
 function deviceRow(d) {
   const info = d.info ?? d.lastInfo;
-  const meta = d.hub ? `${info.running ? `${info.running} running · ` : ''}${info.threads} threads · ${info.projects} projects` : `offline${d.lastSeen ? ` · seen ${ago(Date.parse(d.lastSeen))} ago` : ''}`;
+  const meta = d.hub ? `${info.running ? `${info.running} running · ` : ''}${info.threads} ${info.threads === 1 ? 'thread' : 'threads'} · ${info.projects} ${info.projects === 1 ? 'project' : 'projects'}` : `offline${d.lastSeen ? ` · seen ${ago(Date.parse(d.lastSeen))} ago` : ''}`;
   return h('a', { class: `row top${d.hub ? '' : ' dim'}`, href: `#/d/${encodeURIComponent(d.id)}` },
     h('span', { class: `dot${info?.running ? ' run' : d.hub ? ' on' : ''}`, 'aria-label': d.hub ? 'online' : 'offline' }),
     h('div', { class: 'body' },
@@ -157,7 +155,8 @@ function notifySection() {
     if (isIOS && !standalone) return row('Add Hub to your Home Screen first: tap Share, then Add to Home Screen. iOS only sends notifications to Home Screen apps.');
     if (!pushable) return row('This browser can’t receive web push.');
     if (Notification.permission === 'denied') return row('Notifications are blocked. Allow them in Settings → Notifications → Hub.');
-    const reg = await navigator.serviceWorker.ready;
+    // ready never settles if the worker failed to install; don't leave the section blank
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, no) => setTimeout(() => no(new Error('the app’s service worker isn’t running; reload the page')), 4000))]);
     const sub = await reg.pushManager.getSubscription();
     if (sub && Notification.permission === 'granted') {
       return row('On. You’ll hear when a turn finishes, fails, or every account runs out.',
@@ -292,6 +291,17 @@ function settingSelects(t) {
     Object.entries(opts).map(([k, l]) => h('option', { value: k, selected: k === v }, l)));
   return { model: sel('Model', 'Default', MODELS, t?.model), effort: sel('Effort', 'Default', EFFORTS, t?.effort), mode: sel('Permissions', null, MODES, t?.mode ?? 'auto') };
 }
+// account/model/effort/permissions folded into one tappable line
+function settingsLine(prov, set) {
+  const sum = h('span', { class: 'sum' });
+  const opts = h('details', { class: 'opts' }, h('summary', {}, icon('tune', 'sm'), sum, icon('chev', 'chev')),
+    h('div', { class: 'grid' }, field('Account', prov), field('Permissions', set.mode), field('Model', set.model), field('Effort', set.effort)));
+  const paint = () => { sum.textContent = [prov.value ? SHORT[prov.value] : 'Auto account', MODELS[set.model.value] ?? 'Default model',
+    set.effort.value ? `${EFFORTS[set.effort.value]} effort` : 'Default effort', MODES[set.mode.value]].join(' · '); };
+  for (const x of [prov, set.model, set.effort, set.mode]) x.addEventListener('change', paint);
+  paint();
+  return { opts, paint };
+}
 const field = (label, el, cls = '') => h('label', { class: `field ${cls}` }, h('span', {}, label), el);
 function newThreadForm(id, projects, project, onClose) {
   const proj = h('select', { 'aria-label': 'Project' }, h('option', { value: '' }, 'Auto: from your message'),
@@ -301,6 +311,7 @@ function newThreadForm(id, projects, project, onClose) {
   const text = h('textarea', { placeholder: project ? `What should happen in ${short(project)}?` : 'e.g. fix the camera jitter in battlefield', rows: 4, 'aria-label': 'Message' });
   const send = h('button', { class: 'btn', type: 'submit' }, icon('send', 'sm'), 'Start');
   const att = attacher();
+  const { opts } = settingsLine(prov, set);
   const f = h('form', { class: 'new', onsubmit: async e => {
     e.preventDefault();
     if (!text.value.trim() && !att.count()) return text.focus();
@@ -311,9 +322,9 @@ function newThreadForm(id, projects, project, onClose) {
       location.hash = `#/d/${encodeURIComponent(id)}/t/${t.id}`;
     } catch (err) { toast(err.message); send.disabled = false; }
   } },
-  h('div', { class: 'two' }, field('Project', proj, 'span2'), field('Account', prov), field('Permissions', set.mode), field('Model', set.model), field('Effort', set.effort)),
-  text, att.strip, att.input,
-  h('div', { class: 'new-acts' }, h('button', { class: 'btn quiet', type: 'button', onclick: att.open }, icon('image', 'sm'), 'Image'), h('span', { class: 'grow' }),
+  field('Project', proj),
+  text, att.strip, att.input, opts,
+  h('div', { class: 'new-acts' }, h('button', { class: 'attach', type: 'button', 'aria-label': 'Attach images', onclick: att.open }, icon('image')), h('span', { class: 'grow' }),
     h('button', { class: 'btn quiet', type: 'button', onclick: onClose }, 'Cancel'), send));
   text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) f.requestSubmit(); });
   return f;
@@ -391,13 +402,14 @@ function toolStep(it, busy) {
     busy ? h('span', { class: 'spin', role: 'img', 'aria-label': 'Running' }) : it.failed ? h('span', { class: 'flag' }, 'failed') : null];
   const body = toolBody(it);
   const cls = `step${it.failed ? ' failed' : ''}`;
-  return body ? h('details', { class: cls }, h('summary', {}, head), body) : h('div', { class: `${cls} flat` }, head);
+  const k = it.id ? `s:${it.id}` : undefined;
+  return body ? h('details', { class: cls, 'data-k': k }, h('summary', {}, head), body) : h('div', { class: `${cls} flat`, 'data-k': k }, head);
 }
 function stepGroup(list, live) {
   const failed = list.filter(i => i.failed).length;
   const names = [...new Set(list.map(i => toolLabel(i.name)))].slice(0, 3).join(', ');
   const busy = live && list.at(-1).output == null;
-  return h('details', { class: 'steps', open: live },
+  return h('details', { class: 'steps', open: live, 'data-k': list[0].id ? `g:${list[0].id}` : undefined },
     h('summary', {}, icon('chev', 'chev'), h('span', { class: 'sum' }, `${list.length} ${list.length === 1 ? 'step' : 'steps'} · ${names}`),
       failed ? h('span', { class: 'flag' }, `${failed} failed`) : null, busy ? h('span', { class: 'spin', role: 'img', 'aria-label': 'Running' }) : null),
     h('div', { class: 'list' }, list.map((it, i) => toolStep(it, busy && i === list.length - 1))));
@@ -430,18 +442,27 @@ function changesCard(it) {
       h('span', { class: 'num c' }, f.add ? h('span', { class: 'plus' }, `+${f.add}`) : null, f.del ? h('span', { class: 'minus' }, ` −${f.del}`) : null))),
       it.more ? h('div', { class: 'f more' }, `${it.more} more`) : null));
 }
-const HIDDEN = new Set(['Skill', 'TodoWrite']); // drawn as the skill labels and the plan card instead
+const HIDDEN = new Set(['Skill', 'TodoWrite', 'AskUserQuestion']); // drawn as the skill labels and the plan card instead
 
 // ---------- thread ----------
 function thread(id, tid) {
   let t = null, live = '', liveTurn = null, settingsShown = false;
+  // new things ease in once; everything on screen at first paint just appears
+  const seen = new Set(); let primed = false;
+  const markNew = root => {
+    for (const n of [root, ...root.querySelectorAll('[data-k]')]) {
+      const k = n.dataset.k; if (!k) continue;
+      if (primed && !seen.has(k)) n.classList.add('enter');
+      seen.add(k);
+    }
+    return root;
+  };
+  const drafts = new Map(); // question id -> answers being picked, so a repaint keeps them
   const turnsEl = h('div');
   const bandWhat = h('div', { class: 'what num' }, 'Loading…');
+  const band = h('div', { class: 'band', role: 'status' }, bandWhat);
+  const titleEl = h('span', { class: 't1' }, ''), where = h('span', { class: 't2' }, '');
   const stopTurn = async () => { stop.disabled = true; try { await api(`${dev(id)}threads/${tid}/stop`, { method: 'POST' }); } catch (e) { toast(e.message); stop.disabled = false; } };
-  const stop = h('button', { class: 'btn danger sm', hidden: true, onclick: stopTurn }, icon('stop', 'sm'), 'Stop');
-  const band = h('div', { class: 'band', role: 'status' }, bandWhat, stop);
-  const titleEl = h('h1', { class: 'title clamp', style: { 'font-size': '24px' } }, '');
-  const where = h('p', { class: 'subtitle' }, '');
   const archive = navIcon('archive', 'Archive thread', async () => {
     try { await api(`${dev(id)}threads/${tid}`, { method: 'DELETE' }); location.hash = `#/d/${encodeURIComponent(id)}`; } catch (e) { toast(e.message); }
   });
@@ -449,15 +470,11 @@ function thread(id, tid) {
   // composer: settings, queue, input, send (which turns into Stop while a turn runs and nothing is typed)
   const prov = providerSelect();
   const set = settingSelects();
-  const optsSum = h('span', { class: 'sum' });
-  const opts = h('details', { class: 'opts' }, h('summary', {}, icon('tune', 'sm'), optsSum, icon('chev', 'chev')),
-    h('div', { class: 'grid' }, field('Account', prov), field('Permissions', set.mode), field('Model', set.model), field('Effort', set.effort)));
-  const paintOpts = () => { optsSum.textContent = [prov.value ? SHORT[prov.value] : 'Auto account', MODELS[set.model.value] ?? 'Default model',
-    set.effort.value ? `${EFFORTS[set.effort.value]} effort` : 'Default effort', MODES[set.mode.value]].join(' · '); };
-  for (const s of [prov, set.model, set.effort, set.mode]) s.addEventListener('change', paintOpts);
+  const { opts, paint: paintOpts } = settingsLine(prov, set);
   const queueEl = h('div', { class: 'queue', hidden: true });
   const input = h('textarea', { rows: 1, placeholder: 'Follow up…', 'aria-label': 'Message' });
-  const send = h('button', { class: 'btn send', type: 'submit', 'aria-label': 'Send' }, icon('send'));
+  const send = h('button', { class: 'round send', type: 'submit', 'aria-label': 'Send' }, icon('send'));
+  const stop = h('button', { class: 'round stop', type: 'button', 'aria-label': 'Stop this turn', hidden: true, onclick: stopTurn }, icon('stop'));
   const att = attacher(() => paintSend());
   const attach = h('button', { class: 'attach', type: 'button', 'aria-label': 'Attach images', onclick: att.open }, icon('image'));
   // editing a sent message: sending replaces it and everything after it
@@ -474,11 +491,9 @@ function thread(id, tid) {
     catch (e) { toast(e.message); return false; }
   };
   let busy = false;
-  const stopMode = () => t?.status === 'running' && !input.value.trim() && !att.count() && !editing;
   const form = h('form', { class: 'composer', onsubmit: async e => {
     e.preventDefault();
     if (busy) return;
-    if (stopMode()) return stopTurn();
     const text = input.value.trim();
     if (!text && !att.count()) return input.focus();
     busy = true; send.disabled = true;
@@ -488,23 +503,28 @@ function thread(id, tid) {
       input.value = ''; grow(); att.clear(); prov.value = ''; paintOpts(); opts.open = false;
     } catch (err) { toast(err.message); }
     busy = false; send.disabled = false; paintSend();
-  } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, att.strip, att.input, h('div', { class: 'in' }, attach, input, send)));
+  } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, att.strip, att.input, h('div', { class: 'box' }, attach, input, stop, send)));
   const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, innerHeight * 0.4)}px`; };
   input.addEventListener('input', () => { grow(); paintSend(); });
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) form.requestSubmit(); });
-  mount(h('main', { class: 'screen has-composer' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}`, label: id }, mid: '', end: [archive] }), titleEl, where, band, turnsEl), form);
-  const midEl = app.querySelector('.bar .mid');
+  // jump back to the newest message after scrolling up
+  const jump = h('button', { class: 'jump', type: 'button', 'aria-label': 'Jump to latest', hidden: true, onclick: () => scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }) }, icon('chev', 'sm'));
+  mount(h('main', { class: 'screen has-composer thread' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}`, label: id }, mid: h('div', { class: 'tt' }, titleEl, where), end: [archive], always: true }), band, turnsEl), jump, form);
+  const onScroll = () => { jump.hidden = nearBottom(); };
+  addEventListener('scroll', onScroll, { passive: true }); onCleanup(() => removeEventListener('scroll', onScroll));
   const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${form.offsetHeight}px`));
   ro.observe(form); onCleanup(() => ro.disconnect());
 
   const nearBottom = () => innerHeight + scrollY >= document.documentElement.scrollHeight - 140;
   const stick = f => { const was = nearBottom(); f(); if (was) requestAnimationFrame(() => scrollTo({ top: document.documentElement.scrollHeight })); };
 
+  // while a turn runs, Stop is always there; Send joins it (as "queue") once there's something to send
   function paintSend() {
-    const running = t?.status === 'running', s = stopMode();
-    send.classList.toggle('stop', s);
-    send.setAttribute('aria-label', s ? 'Stop' : running ? 'Queue message' : 'Send');
-    send.replaceChildren(icon(s ? 'stop' : 'send'));
+    const running = t?.status === 'running', has = !!input.value.trim() || att.count() > 0;
+    stop.hidden = !running || !!editing; if (!running) stop.disabled = false;
+    send.hidden = running && !has && !editing;
+    send.disabled = !has;
+    send.setAttribute('aria-label', editing ? 'Send edited message' : running ? 'Queue message' : 'Send');
     input.placeholder = editing ? 'Edit your message' : running ? 'Queue a follow-up…' : 'Follow up…';
   }
   function paintQueue() {
@@ -524,20 +544,20 @@ function thread(id, tid) {
     if (!t) return;
     const last = t.turns.at(-1);
     const running = t.status === 'running';
-    const asks = (last?.items ?? []).filter(i => i.kind === 'approval' && i.status === 'pending').length;
+    const pending = (last?.items ?? []).filter(i => (i.kind === 'approval' || i.kind === 'question') && i.status === 'pending');
+    const asks = pending.length;
     band.className = `band${asks ? ' ask' : running ? ' running' : last?.status === 'failed' ? ' failed' : ''}`;
     const who = last?.provider ? SHORT[last.provider] : running ? 'picking an account' : '';
-    const word = asks ? 'Needs you' : running ? 'Working' : { done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' }[last?.status] ?? 'Idle';
+    const word = asks ? (pending.some(i => i.kind === 'question') ? 'Claude asks' : 'Needs you') : running ? 'Working' : { done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' }[last?.status] ?? 'Idle';
     const time = running ? dur(Date.now() - last.startedAt) : last?.endedAt ? (ago(last.endedAt) === 'now' ? 'just now' : `${ago(last.endedAt)} ago`) : '';
     const q = t.queue?.length ? `${t.queue.length} queued` : '';
     bandWhat.replaceChildren(h('b', {}, word), [who, time, q].filter(Boolean).map(s => ` · ${s}`).join(''));
-    stop.hidden = !running; if (!running) stop.disabled = false;
     archive.disabled = running;
     paintSend();
   }
   function renderTurn(turn) {
     if (turn.role === 'user') return userBubble(turn);
-    const el = h('div', { class: 'turn', 'data-id': turn.id });
+    const el = h('div', { class: 'turn', 'data-id': turn.id, 'data-k': turn.id });
     // name whoever started the turn and how it ran; each handoff seam names who took over after that
     const first = turn.items.find(i => i.kind === 'seam')?.from ?? turn.provider;
     const how = [modelOf(turn, first), turn.effort ? `${EFFORTS[turn.effort]} effort` : null, turn.mode && turn.mode !== 'auto' ? MODES[turn.mode] : null].filter(Boolean);
@@ -549,20 +569,24 @@ function thread(id, tid) {
     const running = turn.status === 'running';
     let group = null;
     const flush = liveGroup => { if (group) el.append(stepGroup(group, liveGroup)); group = null; };
-    for (const it of turn.items) {
-      if (it.kind === 'tool') { if (!HIDDEN.has(it.name)) (group ??= []).push(it); continue; }
+    turn.items.forEach((it, idx) => {
+      if (it.kind === 'tool') { if (!HIDDEN.has(it.name)) (group ??= []).push(it); return; }
       flush(false);
+      const at = el.childElementCount;
       if (it.kind === 'text') el.append(h('div', { class: 'prose', html: md(it.text) }));
       else if (it.kind === 'seam') el.append(h('div', { class: 'seam', role: 'note' }, h('span', { class: 'lab' },
         h('span', { class: 'dot from', style: { '--cf': `var(--${it.from})` } }), '→', h('span', { class: 'dot to', style: { '--ct': `var(--${it.to})` } }),
         ` ${LABEL[it.to]} took over · ${it.reason}`)));
       else if (it.kind === 'approval') el.append(approvalCard(it));
+      else if (it.kind === 'question') el.append(questionCard(it));
       else if (it.kind === 'changes') el.append(changesCard(it));
       else if (it.kind === 'note') el.append(it.tone === 'error' ? h('div', {}, h('span', { class: 'stamp bad' }, 'Failed'), h('div', { class: 'note bad' }, it.text)) : h('p', { class: 'note' }, it.text));
-    }
+      // streamed text was already on screen, so only cards and notes ease in
+      if (it.kind !== 'text') el.children[at]?.setAttribute('data-k', `${turn.id}:${idx}`);
+    });
     flush(running);
     if (running && liveTurn === turn.id && live) el.append(h('div', { class: 'prose live', html: md(live) }));
-    else if (running) el.append(h('p', { class: 'note live' }, 'Working'));
+    else if (running && !turn.items.some(i => (i.kind === 'approval' || i.kind === 'question') && i.status === 'pending')) el.append(h('p', { class: 'note live' }, 'Working'));
     if (turn.status === 'stopped') el.append(h('span', { class: 'stamp muted' }, 'Stopped'));
     if (turn.status === 'interrupted') el.append(h('div', {}, h('span', { class: 'stamp muted' }, 'Interrupted'), h('p', { class: 'note' }, 'The hub restarted during this turn. Send a follow-up to continue.')));
     const text = turn.items.filter(i => i.kind === 'text').map(i => i.text).join('\n\n');
@@ -573,7 +597,7 @@ function thread(id, tid) {
   }
   const imgUrl = n => `/api/${dev(id)}threads/${tid}/images/${n}`;
   function userBubble(turn) {
-    const wrap = h('div', { class: 'msg-user-wrap', 'data-id': turn.id });
+    const wrap = h('div', { class: 'msg-user-wrap', 'data-id': turn.id, 'data-k': turn.id });
     if (turn.images?.length) wrap.append(h('div', { class: 'imgs' }, turn.images.map((n, i) =>
       h('a', { href: imgUrl(n), target: '_blank', rel: 'noopener', 'aria-label': `Attached image ${i + 1}` }, h('img', { src: imgUrl(n), alt: '', loading: 'lazy' })))));
     const lastUser = t.turns.findLast(x => x.role === 'user') === turn;
@@ -582,6 +606,42 @@ function thread(id, tid) {
       h('div', { class: `acts end${lastUser ? ' always' : ''}` }, copyButton(turn.text),
         h('button', { class: 'act', type: 'button', onclick: () => startEdit(turn) }, icon('edit', 'sm'), 'Edit')));
     return wrap;
+  }
+  // Claude's AskUserQuestion: pick options (or write your own), then send; Skip lets it decide
+  function questionCard(it) {
+    const done = it.status !== 'pending';
+    if (done) return h('div', { class: `qcard ${it.status}` },
+      h('div', { class: 'hd' }, icon(it.status === 'answered' ? 'check' : 'x', 'sm'), h('b', {}, it.status === 'answered' ? 'You answered' : it.status === 'denied' ? 'Skipped' : 'No answer')),
+      it.questions.map(q => h('div', { class: 'qa' }, h('div', { class: 'qq' }, q.question), it.answers?.[q.question] ? h('div', { class: 'aa' }, it.answers[q.question]) : null)));
+    const d = drafts.get(it.id) ?? drafts.set(it.id, it.questions.map(() => ({ picked: new Set(), other: '' }))).get(it.id);
+    const ready = () => d.every(x => x.picked.size || x.other.trim());
+    const submit = h('button', { class: 'btn', type: 'button', disabled: !ready(), onclick: async e => {
+      e.currentTarget.disabled = true;
+      const answers = Object.fromEntries(it.questions.map((q, i) => [q.question, [...d[i].picked, d[i].other.trim()].filter(Boolean).join(', ')]));
+      try { await api(`${dev(id)}threads/${tid}/approvals/${it.id}`, { method: 'POST', body: { answers } }); drafts.delete(it.id); } catch (err) { toast(err.message); submit.disabled = !ready(); }
+    } }, 'Send answer');
+    const skip = h('button', { class: 'btn quiet', type: 'button', onclick: async () => {
+      try { await api(`${dev(id)}threads/${tid}/approvals/${it.id}`, { method: 'POST', body: { allow: false } }); drafts.delete(it.id); } catch (err) { toast(err.message); }
+    } }, 'Skip');
+    return h('div', { class: 'qcard pending', role: 'group', 'aria-label': 'Claude asks' },
+      h('div', { class: 'hd' }, icon('ask', 'sm'), h('b', {}, it.questions.length > 1 ? `Claude has ${it.questions.length} questions` : 'Claude asks')),
+      it.questions.map((q, i) => {
+        const opts = q.options.map(o => {
+          const b = h('button', { class: 'opt', type: 'button', 'aria-pressed': String(d[i].picked.has(o.label)), onclick: () => {
+            if (q.multiSelect) d[i].picked.has(o.label) ? d[i].picked.delete(o.label) : d[i].picked.add(o.label);
+            else { d[i].picked.clear(); d[i].picked.add(o.label); d[i].other = ''; other.value = ''; }
+            for (const x of opts) x.setAttribute('aria-pressed', String(d[i].picked.has(x.dataset.v)));
+            submit.disabled = !ready();
+          } }, h('span', { class: 'mark', 'aria-hidden': 'true' }, icon('check', 'xs')), h('span', { class: 'ol' }, h('b', {}, o.label), o.description ? h('span', {}, o.description) : null));
+          b.dataset.v = o.label;
+          return b;
+        });
+        const other = h('input', { type: 'text', class: 'other', placeholder: q.options.length ? 'Or write your own…' : 'Your answer', value: d[i].other, 'aria-label': `Your own answer to: ${q.question}`,
+          oninput: () => { d[i].other = other.value; if (!q.multiSelect && other.value.trim()) { d[i].picked.clear(); for (const x of opts) x.setAttribute('aria-pressed', 'false'); } submit.disabled = !ready(); } });
+        return h('fieldset', { class: `qq-set${q.multiSelect ? ' multi' : ''}` }, h('legend', {}, q.header ? h('span', { class: 'qh' }, q.header) : null, h('span', { class: 'qt' }, q.question),
+          q.multiSelect ? h('span', { class: 'qm' }, 'Pick any') : null), h('div', { class: 'opts-list' }, opts), other);
+      }),
+      h('div', { class: 'btns' }, skip, submit));
   }
   function approvalCard(it) {
     const pending = it.status === 'pending';
@@ -601,16 +661,17 @@ function thread(id, tid) {
   function repaintTurn(turn) {
     const old = turnsEl.querySelector(`[data-id="${turn.id}"]`);
     const keepOpen = [...(old?.querySelectorAll('details') ?? [])].map(d => d.open);
-    const fresh = renderTurn(turn);
+    const fresh = markNew(renderTurn(turn));
     // keep whatever the reader opened or closed; new groups take their own default
     fresh.querySelectorAll('details').forEach((d, i) => { if (i < keepOpen.length) d.open = keepOpen[i]; });
     stick(() => (old ? old.replaceWith(fresh) : turnsEl.append(fresh)));
   }
   const whereText = () => `${t.project?.name ?? (t.auto ? 'Auto project' : 'hub')} · ${id}`;
   function paintAll() {
-    titleEl.textContent = t.title; midEl.textContent = t.title;
+    titleEl.textContent = t.title;
     where.textContent = whereText();
-    stick(() => turnsEl.replaceChildren(...t.turns.map(renderTurn)));
+    stick(() => turnsEl.replaceChildren(...t.turns.map(x => markNew(renderTurn(x)))));
+    primed = true;
     if (!settingsShown) { set.model.value = t.model ?? ''; set.effort.value = t.effort ?? ''; set.mode.value = t.mode ?? 'auto'; settingsShown = true; } // later snapshots mustn't undo an unsent pick
     paintOpts(); paintQueue(); paintBand();
   }
@@ -645,6 +706,7 @@ function route() {
   if (parts[0] === 'd' && parts[1]) return device(parts[1], params);
   return home();
 }
-addEventListener('hashchange', route);
+// screens cross-fade where the browser supports it (iOS 18+); reduced motion just swaps
+addEventListener('hashchange', () => document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches ? document.startViewTransition(route) : route());
 if (pushable) navigator.serviceWorker.register('sw.js').catch(() => {});
 route();

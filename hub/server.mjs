@@ -147,7 +147,7 @@ function saveThread(t, now = false) {
 const summary = t => {
   const last = t.turns.at(-1);
   const lastText = [...t.turns].reverse().flatMap(x => (x.items ?? []).filter(i => i.kind === 'text')).at(0)?.text ?? '';
-  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, mode: t.mode ?? null, queued: t.queue?.length ?? 0, waiting: (last?.items ?? []).filter(i => i.kind === 'approval' && i.status === 'pending').length, updatedAt: t.updatedAt,
+  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, mode: t.mode ?? null, queued: t.queue?.length ?? 0, waiting: (last?.items ?? []).filter(i => (i.kind === 'approval' || i.kind === 'question') && i.status === 'pending').length, updatedAt: t.updatedAt,
     createdAt: t.createdAt, lastStatus: last?.status ?? null, preview: lastText.slice(0, 160), turns: t.turns.length };
 };
 const asTranscript = turns => turns.map(t => t.role === 'user' ? { role: 'user', text: t.text }
@@ -452,16 +452,25 @@ async function askApproval(req, res) {
   const t = threads.get(p.thread), turn = t?.turns.find(x => x.id === p.turn);
   if (!t || turn?.status !== 'running') return json(res, 200, { allow: false, message: 'That turn is no longer running.' });
   const tool = str(p.tool, 200) ?? 'tool', input = p.input && typeof p.input === 'object' ? p.input : {};
-  const item = { kind: 'approval', id: crypto.randomUUID(), name: tool, detail: lib.toolDetail(input), view: lib.toolView(tool, input) ?? undefined, status: 'pending' };
+  // AskUserQuestion arrives here too (it needs a human): it becomes a question card, answered with updatedInput.answers
+  const questions = tool === 'AskUserQuestion' && Array.isArray(input.questions) ? lib.cleanQuestions(input.questions) : null;
+  const item = questions
+    ? { kind: 'question', id: crypto.randomUUID(), questions, status: 'pending' }
+    : { kind: 'approval', id: crypto.randomUUID(), name: tool, detail: lib.toolDetail(input), view: lib.toolView(tool, input) ?? undefined, status: 'pending' };
   addItem(t, turn, item);
   emit(t.id, { type: 'turn', turn: { ...turn, items: undefined }, thread: summary(t) });
-  notify({ title: `${(t.project?.name ?? 'hub').split('/').pop()} · needs you`, body: `Allow ${tool}: ${item.detail}`.slice(0, 160), tag: `${t.id}-ask`, url: `/#/d/${me.id}/t/${t.id}` }).catch(() => {});
+  const proj = (t.project?.name ?? 'hub').split('/').pop();
+  notify(questions ? { title: `${proj} · Claude asks`, body: questions[0].question.slice(0, 160), tag: `${t.id}-ask`, url: `/#/d/${me.id}/t/${t.id}` }
+    : { title: `${proj} · needs you`, body: `Allow ${tool}: ${item.detail}`.slice(0, 160), tag: `${t.id}-ask`, url: `/#/d/${me.id}/t/${t.id}` }).catch(() => {});
   const answer = await new Promise(resolve => {
-    const done = (allow, status) => {
+    const done = (allow, status, answers) => {
       if (item.status !== 'pending') return;
-      approvals.delete(item.id); item.status = status; patchItem(t, turn, item);
+      approvals.delete(item.id); item.status = status;
+      if (answers) item.answers = answers;
+      patchItem(t, turn, item);
       emit(t.id, { type: 'turn', turn: { ...turn, items: undefined }, thread: summary(t) });
-      resolve({ allow, message: status === 'denied' ? 'The user denied this from the Hub app.' : undefined });
+      resolve(answers ? { allow: true, updatedInput: { ...input, answers } }
+        : { allow, message: status === 'denied' ? (questions ? 'The user skipped these questions. Use your best judgment and say what you assumed.' : 'The user denied this from the Hub app.') : undefined });
     };
     approvals.set(item.id, { t, done });
     res.on('close', () => done(false, 'expired')); // the agent went away (stopped, timed out)
@@ -584,8 +593,11 @@ async function local(req, res, parts) {
   if (t && c === 'approvals' && parts[3] && m === 'POST') {
     const a = approvals.get(parts[3]);
     if (!a || a.t !== t) throw new HttpError(404, 'That request already has an answer.');
-    const allow = !!(await body(req)).allow;
-    a.done(allow, allow ? 'allowed' : 'denied');
+    const p = await body(req);
+    if (p.answers && typeof p.answers === 'object') { // a question card: { question text: answer }
+      const answers = Object.fromEntries(Object.entries(p.answers).map(([q, v]) => [String(q).slice(0, 500), String(v).slice(0, 2000)]));
+      a.done(true, 'answered', answers);
+    } else a.done(!!p.allow, p.allow ? 'allowed' : 'denied');
     return json(res, 200, { ok: true });
   }
   if (t && c === 'rewind' && m === 'POST') { // edit or retry: drop this message and everything after it, then send it again

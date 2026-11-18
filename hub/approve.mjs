@@ -14,7 +14,8 @@ async function decide(args) {
       signal: AbortSignal.timeout(3_600_000), // an unanswered prompt is denied after an hour
     });
     const d = await r.json();
-    return d.allow ? { behavior: 'allow', updatedInput: args.input ?? {} } : { behavior: 'deny', message: d.message || 'Denied from the Hub app.' };
+    // updatedInput carries the answers when the request was an AskUserQuestion
+    return d.allow ? { behavior: 'allow', updatedInput: d.updatedInput ?? args.input ?? {} } : { behavior: 'deny', message: d.message || 'Denied from the Hub app.' };
   } catch (e) {
     return { behavior: 'deny', message: `No answer from the Hub app (${e.message}).` };
   }
