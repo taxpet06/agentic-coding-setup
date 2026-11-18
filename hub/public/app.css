@@ -105,7 +105,7 @@ svg.i.sm { width: 16px; height: 16px; stroke-width: 2; }
 h1.title.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 h1.title { font-size: 34px; line-height: 1.12; font-weight: 700; letter-spacing: -0.022em; margin: 6px 0 4px; overflow-wrap: anywhere; }
 .subtitle { color: var(--text-2); font-size: 15px; margin: 0 0 20px; }
-h2.section { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-2); margin: 28px 4px 8px; }
+h2.section { font-size: 15px; font-weight: 600; color: var(--text); margin: 28px 4px 8px; }
 
 /* ---------- grouped list ---------- */
 .group { background: var(--panel); border-radius: var(--r-row); overflow: hidden; }
@@ -218,17 +218,44 @@ select:focus, input:focus, textarea:focus { outline: none; border-color: var(--a
 .who-line { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); margin: 4px 0 6px; }
 .who-line .how { color: var(--text-3); }
 .who-line .dot { width: 7px; height: 7px; background: var(--c, var(--text-3)); }
-.skills { display: flex; flex-wrap: wrap; gap: 4px; margin: -2px 0 8px; }
-.skills .tag { margin-left: 0; }
+.skills { display: flex; align-items: center; gap: 6px; margin: -2px 0 8px; font-size: 12.5px; color: var(--text-3); }
+.skills svg.i { width: 13px; height: 13px; flex: none; }
 
-.prose { overflow-wrap: anywhere; }
+.prose { overflow-wrap: anywhere; line-height: 1.5; }
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 10px; }
 .prose p { margin: 0 0 10px; }
 .prose ul, .prose ol { margin: 0 0 10px; padding-left: 22px; }
-.prose li { margin: 2px 0; }
-.prose h4 { font-size: 17px; margin: 14px 0 6px; }
-.prose pre, pre.out { font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--code-bg); padding: 10px 12px; border-radius: 10px;
-  overflow-x: auto; margin: 0 0 10px; white-space: pre; -webkit-overflow-scrolling: touch; }
-.prose a { color: var(--accent); text-underline-offset: 2px; }
+.prose li { margin: 3px 0; }
+.prose li > ul, .prose li > ol { margin: 3px 0 0; }
+.prose li::marker { color: var(--text-3); }
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 { line-height: 1.25; letter-spacing: -0.01em; margin: 20px 0 8px; text-wrap: balance; }
+.prose h1 { font-size: 22px; } .prose h2 { font-size: 19px; } .prose h3 { font-size: 17px; }
+.prose h4, .prose h5, .prose h6 { font-size: 15px; color: var(--text-2); }
+.prose strong { font-weight: 650; }
+.prose del { color: var(--text-3); }
+.prose a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.prose blockquote { margin: 0 0 10px; padding: 2px 0 2px 14px; color: var(--text-2); box-shadow: inset 2px 0 0 var(--seam-strong); }
+.prose hr { border: 0; height: 1px; background: var(--seam-strong); margin: 18px 0; }
+.prose img { max-width: 100%; height: auto; border-radius: 10px; }
+.prose input[type="checkbox"] { margin: 0 6px 0 -20px; vertical-align: -1px; accent-color: var(--ok); }
+.prose li:has(> input[type="checkbox"]) { list-style: none; }
+/* tables: hairlines only, scroll sideways inside the message on a phone */
+.prose .tbl { overflow-x: auto; margin: 2px 0 12px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--seam-strong); -webkit-overflow-scrolling: touch; }
+.prose table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.4; }
+.prose th, .prose td { padding: 8px 12px; text-align: left; vertical-align: top; min-width: 7ch; }
+.prose th { font-weight: 600; background: var(--panel-2); white-space: nowrap; }
+.prose tr + tr td, .prose thead + tbody tr:first-child td { box-shadow: inset 0 1px 0 var(--seam); }
+.prose td code { white-space: nowrap; }
+/* code blocks, with a copy button that shows on hover (always on touch) */
+.prose .code { position: relative; margin: 0 0 10px; }
+.prose pre, pre.out { font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); padding: 10px 12px; border-radius: 10px;
+  overflow-x: auto; margin: 0; white-space: pre; -webkit-overflow-scrolling: touch; }
+.prose pre code { background: none; padding: 0; font-size: inherit; }
+.copy-code { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px;
+  background: var(--panel); color: var(--text-2); box-shadow: 0 0 0 1px var(--seam); transition: opacity 160ms var(--ease), transform 140ms var(--ease); }
+.copy-code:active { transform: scale(0.92); }
+@media (hover: hover) and (pointer: fine) { .copy-code { opacity: 0; } .code:hover .copy-code, .copy-code:focus-visible { opacity: 1; } }
 .live::after { content: ""; display: inline-block; width: 7px; height: 1.05em; vertical-align: -2px; margin-left: 2px; background: var(--run); border-radius: 1px; animation: breathe 1s steps(2) infinite; }
 
 /* tool calls: a group per run of steps, each step opens to its command, output or diff */
@@ -474,7 +501,7 @@ body.wide .toast { left: calc(50% + var(--side) / 2); }
 body.wide .screen { max-width: 800px; padding-left: 28px; padding-right: 28px; }
 body.wide .bar { margin-left: -28px; margin-right: -28px; padding-left: 16px; padding-right: 16px; }
 body.wide .band { margin-left: -28px; margin-right: -28px; padding-left: 28px; padding-right: 28px; }
-body.wide .composer .wrap { max-width: 744px; }
+body.wide .composer .wrap { max-width: 760px; }
 body.wide .msg-user { max-width: 72%; }
 .side-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); text-decoration: none; }
@@ -496,3 +523,19 @@ body.wide .msg-user { max-width: 72%; }
 .side-t.on .t { font-weight: 600; }
 .side-empty { font-size: 13px; color: var(--text-3); margin: 2px 8px 6px; }
 @media (hover: hover) { .side-dev-row:hover, .side-t:not(.on):hover { background: var(--press); } }
+
+/* desktop thread: bar and band span the pane, the conversation keeps a reading column under the composer */
+body.wide .bar a.navbtn[aria-label^="Back"] { visibility: hidden; }
+body.wide .screen.thread { max-width: none; }
+body.wide .screen.thread .turns { max-width: 760px; margin: 0 auto; }
+body.wide .screen.thread .band { justify-content: center; }
+body.wide .screen.thread .band .what { flex: 0 1 760px; }
+/* with a mouse, message actions wait for hover instead of sitting under every message */
+@media (hover: hover) and (pointer: fine) {
+  .turn > .acts, .msg-user-wrap .acts { display: flex; opacity: 0; transition: opacity 160ms var(--ease); }
+  .turn:hover > .acts, .msg-user-wrap:hover .acts, .acts:focus-within { opacity: 1; }
+}
+/* desktop: the bar spans the whole pane (not just the column), and stays clear until there's something under it */
+body.wide .bar { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; border-bottom-color: transparent; clip-path: inset(0 -100vmax -1px); }
+body.wide .bar.scrolled, body.wide .screen.thread .bar { background: var(--bg); box-shadow: 0 0 0 100vmax var(--bg); }
+body.wide .bar.scrolled:not(.always) { box-shadow: 0 0 0 100vmax var(--bg), 0 1px 0 100vmax var(--seam); }

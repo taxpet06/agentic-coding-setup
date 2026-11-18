@@ -1,3 +1,5 @@
+import { marked } from './vendor/marked.js';
+import DOMPurify from './vendor/purify.js';
 // Hub PWA. Talks to the hub agent that served it; other devices are reached through it at /api/d/<device>/...
 const app = document.getElementById('app');
 const PROVIDERS = ['personal', 'school', 'codex'];
@@ -9,7 +11,7 @@ const EFFORTS = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high
 // keep in step with lib.mjs MODES
 const MODES = { auto: 'Auto mode', manual: 'Ask me', acceptEdits: 'Accept edits', plan: 'Plan only', bypassPermissions: 'Bypass permissions' };
 
-// ---------- tiny DOM kit (text always goes in as text nodes; only md() output is HTML, and it escapes) ----------
+// ---------- tiny DOM kit (text always goes in as text nodes; only prose() output is HTML, and it's sanitized) ----------
 function h(tag, attrs, ...kids) {
   const el = document.createElementNS(tag === 'svg' || tag === 'use' ? 'http://www.w3.org/2000/svg' : 'http://www.w3.org/1999/xhtml', tag);
   for (const [k, v] of Object.entries(attrs ?? {})) {
@@ -23,31 +25,27 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 const icon = (name, cls = '') => { const s = h('svg', { class: `i ${cls}`, 'aria-hidden': 'true' }); s.append(h('use', { href: `#i-${name}` })); return s; };
-const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const inline = s => esc(s)
-  .replace(/`([^`]+)`/g, '<code>$1</code>')
-  .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-function md(src) {
-  const out = [];
-  src.split('```').forEach((part, i) => {
-    if (i % 2) { const nl = part.indexOf('\n'); out.push(`<pre>${esc((nl >= 0 ? part.slice(nl + 1) : part).replace(/\n$/, ''))}</pre>`); return; }
-    for (const para of part.split(/\n{2,}/)) {
-      let list = null, buf = [];
-      const flushList = () => { if (list) out.push(`<${list.t}>${list.items.map(x => `<li>${inline(x)}</li>`).join('')}</${list.t}>`); list = null; };
-      const flushP = () => { if (buf.length) out.push(`<p>${buf.map(inline).join('<br>')}</p>`); buf = []; };
-      for (const line of para.split('\n')) {
-        let m;
-        if ((m = line.match(/^\s*[-*•]\s+(.*)/))) { flushP(); if (list?.t !== 'ul') { flushList(); list = { t: 'ul', items: [] }; } list.items.push(m[1]); }
-        else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { flushP(); if (list?.t !== 'ol') { flushList(); list = { t: 'ol', items: [] }; } list.items.push(m[1]); }
-        else if ((m = line.match(/^#{1,6}\s+(.*)/))) { flushP(); flushList(); out.push(`<h4>${inline(m[1])}</h4>`); }
-        else if (line.trim()) { flushList(); buf.push(line); }
-      }
-      flushP(); flushList();
-    }
-  });
-  return out.join('');
+// Markdown: full GFM (tables, task lists, strikethrough, nested lists, quotes) via marked, then DOMPurify,
+// because agent output can carry raw HTML. Single newlines break lines, like a chat.
+marked.use({ gfm: true, breaks: true });
+DOMPurify.addHook('afterSanitizeAttributes', n => { if (n.tagName === 'A' && n.hasAttribute('href')) { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener noreferrer'); } });
+function prose(src, cls = 'prose') {
+  const el = h('div', { class: cls, html: DOMPurify.sanitize(marked.parse(src, { async: false })) });
+  for (const t of el.querySelectorAll('table')) t.replaceWith(h('div', { class: 'tbl' }, t.cloneNode(true))); // wide tables scroll, the page doesn't
+  for (const pre of el.querySelectorAll('pre')) { // code blocks get a copy button
+    const b = h('button', { class: 'copy-code', type: 'button', 'aria-label': 'Copy code', onclick: async () => {
+      try { await navigator.clipboard.writeText(pre.innerText); b.replaceChildren(icon('check', 'sm')); setTimeout(() => b.replaceChildren(icon('copy', 'sm')), 1400); } catch { toast('Couldn’t copy'); }
+    } }, icon('copy', 'sm'));
+    pre.replaceWith(h('div', { class: 'code' }, pre.cloneNode(true), b));
+  }
+  return el;
 }
+
+// drafts survive leaving a screen, reloading, or closing the app
+const saved = {
+  get: k => { try { return localStorage.getItem(`hub.draft.${k}`) ?? ''; } catch { return ''; } },
+  set: (k, v) => { try { v.trim() ? localStorage.setItem(`hub.draft.${k}`, v) : localStorage.removeItem(`hub.draft.${k}`); } catch {} },
+};
 
 // ---------- data ----------
 async function api(path, { method = 'GET', body } = {}) {
@@ -202,9 +200,9 @@ async function device(id, params) {
     for (const b of seg.children) b.setAttribute('aria-selected', String(b.dataset.t === t));
     paint();
   }
-  function openComposer(project) {
-    composerSlot.replaceChildren(newThreadForm(id, projects ?? [], project, () => composerSlot.replaceChildren()));
-    composerSlot.querySelector('textarea')?.focus();
+  function openComposer(project, focus = true) {
+    composerSlot.replaceChildren(newThreadForm(id, projects ?? [], project, () => { saved.set(`${id}/new`, ''); composerSlot.replaceChildren(); }));
+    if (focus) composerSlot.querySelector('textarea')?.focus();
   }
   function paint() {
     if (!info) return;
@@ -253,6 +251,7 @@ async function device(id, params) {
     }
   }
   if (params.get('new') != null) { projects = await api(`${dev(id)}projects`).catch(() => []); openComposer(params.get('new') || undefined); }
+  else if (saved.get(`${id}/new`)) { projects = await api(`${dev(id)}projects`).catch(() => []); openComposer(undefined, false); } // an unsent new thread is waiting
   load(); every(5000, load);
 }
 function threadRow(id, t) {
@@ -309,6 +308,9 @@ function newThreadForm(id, projects, project, onClose) {
   const prov = providerSelect();
   const set = settingSelects();
   const text = h('textarea', { placeholder: project ? `What should happen in ${short(project)}?` : 'e.g. fix the camera jitter in battlefield', rows: 4, 'aria-label': 'Message' });
+  const dkey = `${id}/new`;
+  text.value = saved.get(dkey);
+  text.addEventListener('input', () => saved.set(dkey, text.value));
   const send = h('button', { class: 'btn', type: 'submit' }, icon('send', 'sm'), 'Start');
   const att = attacher();
   const { opts } = settingsLine(prov, set);
@@ -319,6 +321,7 @@ function newThreadForm(id, projects, project, onClose) {
     try {
       const t = await api(`${dev(id)}threads`, { method: 'POST', body: { text: text.value, project: proj.value || undefined, provider: prov.value || undefined,
         model: set.model.value, effort: set.effort.value, mode: set.mode.value, images: att.take() } });
+      saved.set(dkey, '');
       location.hash = `#/d/${encodeURIComponent(id)}/t/${t.id}`;
     } catch (err) { toast(err.message); send.disabled = false; }
   } },
@@ -458,7 +461,7 @@ function thread(id, tid) {
     return root;
   };
   const drafts = new Map(); // question id -> answers being picked, so a repaint keeps them
-  const turnsEl = h('div');
+  const turnsEl = h('div', { class: 'turns' });
   const bandWhat = h('div', { class: 'what num' }, 'Loading…');
   const band = h('div', { class: 'band', role: 'status' }, bandWhat);
   const titleEl = h('span', { class: 't1' }, ''), where = h('span', { class: 't2' }, '');
@@ -481,11 +484,12 @@ function thread(id, tid) {
   let editing = null;
   const editBar = h('div', { class: 'editing', hidden: true }, icon('edit', 'sm'), h('span', {}, 'Editing. The replies after this message will be replaced.'),
     h('button', { type: 'button', class: 'qb', 'aria-label': 'Cancel editing', onclick: () => endEdit() }, icon('x', 'sm')));
+  const dkey = `${id}/${tid}`;
   function startEdit(turn) {
     editing = turn; editBar.hidden = false; attach.hidden = true; att.clear();
     input.value = turn.text; grow(); paintSend(); input.focus();
   }
-  function endEdit() { editing = null; editBar.hidden = true; attach.hidden = false; input.value = ''; grow(); paintSend(); }
+  function endEdit() { editing = null; editBar.hidden = true; attach.hidden = false; input.value = saved.get(dkey); grow(); paintSend(); } // back to the draft
   const rewind = async (turnId, text) => {
     try { await api(`${dev(id)}threads/${tid}/rewind`, { method: 'POST', body: { turnId, text, model: set.model.value, effort: set.effort.value, mode: set.mode.value } }); return true; }
     catch (e) { toast(e.message); return false; }
@@ -500,18 +504,19 @@ function thread(id, tid) {
     if (editing) { if (text && await rewind(editing.id, text)) endEdit(); }
     else try {
       await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: set.model.value, effort: set.effort.value, mode: set.mode.value, images: att.take() } });
-      input.value = ''; grow(); att.clear(); prov.value = ''; paintOpts(); opts.open = false;
+      input.value = ''; saved.set(dkey, ''); grow(); att.clear(); prov.value = ''; paintOpts(); opts.open = false;
     } catch (err) { toast(err.message); }
     busy = false; send.disabled = false; paintSend();
   } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, att.strip, att.input, h('div', { class: 'box' }, attach, input, stop, send)));
   const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, innerHeight * 0.4)}px`; };
-  input.addEventListener('input', () => { grow(); paintSend(); });
+  input.addEventListener('input', () => { if (!editing) saved.set(dkey, input.value); grow(); paintSend(); });
   input.addEventListener('keydown', e => sendKey(e, form));
   // jump back to the newest message after scrolling up
   const jump = h('button', { class: 'jump', type: 'button', 'aria-label': 'Jump to latest', hidden: true, onclick: () => scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }) }, icon('chev', 'sm'));
   mount(h('main', { class: 'screen has-composer thread' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}`, label: id }, mid: h('div', { class: 'tt' }, titleEl, where), end: [archive], always: true }), band, turnsEl), jump, form);
   const onScroll = () => { jump.hidden = nearBottom(); };
   addEventListener('scroll', onScroll, { passive: true }); onCleanup(() => removeEventListener('scroll', onScroll));
+  input.value = saved.get(dkey); grow();
   const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${form.offsetHeight}px`));
   ro.observe(form); onCleanup(() => ro.disconnect());
 
@@ -534,7 +539,7 @@ function thread(id, tid) {
       h('span', { class: 'k' }, i ? `Then` : 'Next'),
       h('span', { class: 't' }, m.text),
       h('button', { class: 'qb', type: 'button', 'aria-label': 'Edit queued message', onclick: async () => {
-        try { await api(`${dev(id)}threads/${tid}/queue/${m.id}`, { method: 'DELETE' }); input.value = input.value.trim() ? `${input.value}\n${m.text}` : m.text; grow(); paintSend(); input.focus(); } catch (e) { toast(e.message); }
+        try { await api(`${dev(id)}threads/${tid}/queue/${m.id}`, { method: 'DELETE' }); input.value = input.value.trim() ? `${input.value}\n${m.text}` : m.text; if (!editing) saved.set(dkey, input.value); grow(); paintSend(); input.focus(); } catch (e) { toast(e.message); }
       } }, icon('edit', 'sm')),
       h('button', { class: 'qb', type: 'button', 'aria-label': 'Remove queued message', onclick: async () => {
         try { await api(`${dev(id)}threads/${tid}/queue/${m.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message); }
@@ -563,7 +568,7 @@ function thread(id, tid) {
     const how = [modelOf(turn, first), turn.effort ? `${EFFORTS[turn.effort]} effort` : null, turn.mode && turn.mode !== 'auto' ? MODES[turn.mode] : null].filter(Boolean);
     if (first) el.append(h('div', { class: `who-line c-${first}` }, h('span', { class: 'dot' }), LABEL[first], how.length ? h('span', { class: 'how' }, ` · ${how.join(' · ')}`) : null));
     const skills = [...new Set(turn.items.filter(i => i.kind === 'tool' && i.name === 'Skill' && i.detail).map(i => i.detail))];
-    if (skills.length) el.append(h('div', { class: 'skills', 'aria-label': 'Skills loaded' }, skills.map(s => h('span', { class: 'tag' }, s))));
+    if (skills.length) el.append(h('div', { class: 'skills' }, icon('step', 'sm'), h('span', {}, `Skills: ${skills.join(', ')}`)));
     const plan = turn.items.findLast(i => i.kind === 'tool' && i.name === 'TodoWrite' && i.view?.todos?.length);
     if (plan) el.append(todoCard(plan.view.todos));
     const running = turn.status === 'running';
@@ -573,7 +578,7 @@ function thread(id, tid) {
       if (it.kind === 'tool') { if (!HIDDEN.has(it.name)) (group ??= []).push(it); return; }
       flush(false);
       const at = el.childElementCount;
-      if (it.kind === 'text') el.append(h('div', { class: 'prose', html: md(it.text) }));
+      if (it.kind === 'text') el.append(prose(it.text));
       else if (it.kind === 'seam') el.append(h('div', { class: 'seam', role: 'note' }, h('span', { class: 'lab' },
         h('span', { class: 'dot from', style: { '--cf': `var(--${it.from})` } }), '→', h('span', { class: 'dot to', style: { '--ct': `var(--${it.to})` } }),
         ` ${LABEL[it.to]} took over · ${it.reason}`)));
@@ -585,7 +590,7 @@ function thread(id, tid) {
       if (it.kind !== 'text') el.children[at]?.setAttribute('data-k', `${turn.id}:${idx}`);
     });
     flush(running);
-    if (running && liveTurn === turn.id && live) el.append(h('div', { class: 'prose live', html: md(live) }));
+    if (running && liveTurn === turn.id && live) el.append(prose(live, 'prose live'));
     else if (running && !turn.items.some(i => (i.kind === 'approval' || i.kind === 'question') && i.status === 'pending')) el.append(h('p', { class: 'note live' }, 'Working'));
     if (turn.status === 'stopped') el.append(h('span', { class: 'stamp muted' }, 'Stopped'));
     if (turn.status === 'interrupted') el.append(h('div', {}, h('span', { class: 'stamp muted' }, 'Interrupted'), h('p', { class: 'note' }, 'The hub restarted during this turn. Send a follow-up to continue.')));
@@ -714,7 +719,7 @@ async function paintSide(fetch = true) {
       ...hubs.map(d => {
         const info = d.info ?? d.lastInfo, open = d.id === cur;
         return h('section', { class: `side-dev${open ? ' open' : ''}${d.hub ? '' : ' off'}` },
-          h('a', { class: 'side-dev-row', href: `#/d/${encodeURIComponent(d.id)}`, 'aria-current': open && !at.tid ? 'page' : null },
+          h('a', { class: 'side-dev-row', href: `#/d/${encodeURIComponent(d.id)}`, 'aria-current': at.dev === d.id && !at.tid ? 'page' : null },
             h('span', { class: `dot${info?.running ? ' run' : d.hub ? ' on' : ''}` }), h('span', { class: 'n' }, d.id),
             h('span', { class: 'm num' }, d.hub ? (info?.running ? `${info.running} running` : '') : 'offline')),
           open && d.hub && info ? meters(info) : null,

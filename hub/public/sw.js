@@ -1,6 +1,6 @@
 // Push notifications + an offline shell. API calls are never cached: stale agent state is worse than none.
-const SHELL = 'hub-shell-v2';
-const FILES = ['./', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png'];
+const SHELL = 'hub-shell-v3';
+const FILES = ['./', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png', 'vendor/marked.js', 'vendor/purify.js'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
