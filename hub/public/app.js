@@ -310,6 +310,7 @@ function newThreadForm(id, projects, project, onClose) {
   const text = h('textarea', { placeholder: project ? `What should happen in ${short(project)}?` : 'e.g. fix the camera jitter in battlefield', rows: 4, 'aria-label': 'Message' });
   const dkey = `${id}/new`;
   text.value = saved.get(dkey);
+  queueMicrotask(() => att.bind(text, f));
   text.addEventListener('input', () => saved.set(dkey, text.value));
   const send = h('button', { class: 'btn', type: 'submit' }, icon('send', 'sm'), 'Start');
   const att = attacher();
@@ -345,13 +346,15 @@ async function shrink(file) {
 }
 function attacher(onChange = () => {}) {
   const files = [];
-  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async () => {
-    for (const f of input.files) {
+  async function add(list) {
+    for (const f of list) {
+      if (!f.type.startsWith('image/')) continue;
       if (files.length >= 6) { toast('Up to six images'); break; }
-      try { files.push(await shrink(f)); } catch { toast(`Couldn’t read ${f.name}`); }
+      try { files.push(await shrink(f)); } catch { toast(`Couldn’t read ${f.name || 'that image'}`); }
     }
-    input.value = ''; paint();
-  } });
+    paint();
+  }
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async () => { await add([...input.files]); input.value = ''; } });
   const strip = h('div', { class: 'thumbs', hidden: true });
   function paint() {
     strip.hidden = !files.length;
@@ -359,7 +362,20 @@ function attacher(onChange = () => {}) {
       h('button', { type: 'button', class: 'rm', 'aria-label': `Remove attachment ${i + 1}`, onclick: () => { URL.revokeObjectURL(f.url); files.splice(i, 1); paint(); } }, icon('x', 'xs')))));
     onChange();
   }
-  return { input, strip, open: () => input.click(), count: () => files.length,
+  // paste a screenshot into the text box, or drop image files anywhere on the form
+  function bind(field, zone) {
+    field.addEventListener('paste', e => {
+      const imgs = [...(e.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'));
+      if (!imgs.length) return;
+      if (!e.clipboardData.getData('text/plain')) e.preventDefault(); // a bare image: don't also paste its file name
+      add(imgs);
+    });
+    const hasFiles = e => [...(e.dataTransfer?.types ?? [])].includes('Files');
+    zone.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); zone.classList.add('dropping'); });
+    zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget)) zone.classList.remove('dropping'); });
+    zone.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefault(); zone.classList.remove('dropping'); add([...e.dataTransfer.files]); });
+  }
+  return { input, strip, bind, open: () => input.click(), count: () => files.length,
     take: () => files.map(f => ({ type: f.type, data: f.data })), clear: () => { files.forEach(f => URL.revokeObjectURL(f.url)); files.length = 0; paint(); } };
 }
 
@@ -508,7 +524,8 @@ function thread(id, tid) {
     } catch (err) { toast(err.message); }
     busy = false; send.disabled = false; paintSend();
   } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, att.strip, att.input, h('div', { class: 'box' }, attach, input, stop, send)));
-  const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, innerHeight * 0.4)}px`; };
+  // one line is exactly button height, so the text and the image/send buttons share a centre line
+  const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, innerHeight * 0.4)}px`; };
   input.addEventListener('input', () => { if (!editing) saved.set(dkey, input.value); grow(); paintSend(); });
   input.addEventListener('keydown', e => sendKey(e, form));
   // jump back to the newest message after scrolling up
@@ -517,6 +534,7 @@ function thread(id, tid) {
   const onScroll = () => { jump.hidden = nearBottom(); };
   addEventListener('scroll', onScroll, { passive: true }); onCleanup(() => removeEventListener('scroll', onScroll));
   input.value = saved.get(dkey); grow();
+  att.bind(input, form);
   const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${form.offsetHeight}px`));
   ro.observe(form); onCleanup(() => ro.disconnect());
 
