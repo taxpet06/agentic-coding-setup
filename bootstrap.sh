@@ -71,6 +71,8 @@ sed -i 's#/home/petros/#'"$HOME"'/#g' ~/.codex/hooks.json
 
 step "project hub (see HUB.md): index repos, let hub sessions work anywhere under \$HOME"
 install -m755 "$R/bin/hub" ~/.local/bin/
+have npm && (cd "$R/hub" && npm ci --omit=dev --no-fund --no-audit 2>&1 | tail -1)   # Hub app agent deps (web-push)
+systemctl --user is-active -q hub-agent 2>/dev/null && ~/.local/bin/hub app >/dev/null   # restart it on the pulled code
 have jq || echo "  MISSING jq (hub hooks need it): sudo apt install jq"
 have tmux || echo "  MISSING tmux (hub serve needs it): sudo apt install tmux"
 # gitignored, machine-specific: phone sessions started in this repo may touch any repo in \$HOME

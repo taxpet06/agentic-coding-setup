@@ -7,3 +7,5 @@ history.jsonl
 *.pre-setup
 *.bak
 .claude/settings.local.json
+.impeccable/*
+!.impeccable/surfaces/

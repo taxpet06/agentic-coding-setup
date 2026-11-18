@@ -6,6 +6,7 @@
 #   hub pull             fast-forward every repo that has an upstream
 #   hub push <repo>...   commit (auto-sync msg) + pull --rebase + push those repos
 #   hub serve            start `claude remote-control` for the hub in tmux session "hub"
+#   hub app [stop|logs]  run the Hub app agent (systemd user service, else tmux) and publish it at https://<host>.<tailnet>.ts.net
 #   hub selftest         sanity-check push/secret guard against a throwaway repo
 #   hub hook-start|hook-touch|hook-stop   Claude Code hooks (claude/settings.json)
 set -uo pipefail
@@ -83,6 +84,53 @@ serve() {
   echo "hub serving: Claude iOS app -> Code -> session 'hub'   (watch: tmux attach -t hub)"
 }
 
+HUB_PORT=${HUB_PORT:-7787}
+app() {
+  local node; node=$(command -v node) || { echo "hub app needs node (bootstrap.sh installs it)"; return 1; }
+  [ -d "$HUB_DIR/hub/node_modules/web-push" ] || (cd "$HUB_DIR/hub" && npm ci --omit=dev --no-fund --no-audit >/dev/null) || { echo "npm ci failed in $HUB_DIR/hub"; return 1; }
+  local unit=~/.config/systemd/user/hub-agent.service
+  if [ "${1:-}" = stop ]; then systemctl --user disable --now hub-agent 2>/dev/null; tmux kill-session -t hub-agent 2>/dev/null; tailscale serve --https=443 off >/dev/null 2>&1; echo "hub app stopped"; return; fi
+  if [ "${1:-}" = logs ]; then journalctl --user -u hub-agent -n 80 --no-pager 2>/dev/null || tmux capture-pane -pt hub-agent; return; fi
+  if systemctl --user show-environment >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$unit")"
+    cat > "$unit" <<EOF
+[Unit]
+Description=Hub agent (phone app + agent runner, see $HUB_DIR/HUB.md)
+After=network-online.target
+
+[Service]
+ExecStart=$node $HUB_DIR/hub/server.mjs
+WorkingDirectory=$HUB_DIR
+Environment=HUB_DIR=$HUB_DIR HUB_PORT=$HUB_PORT PATH=$HOME/.local/bin:$(dirname "$node"):/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+# turns run as child processes; let them finish their own cleanup on stop
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload && systemctl --user enable hub-agent >/dev/null 2>&1
+    systemctl --user restart hub-agent   # restart picks up a `git pull`ed server.mjs
+    loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q yes || echo "  tip: 'sudo loginctl enable-linger $USER' keeps the agent running while you're logged out"
+  else   # WSL without systemd and friends
+    tmux kill-session -t hub-agent 2>/dev/null
+    tmux new-session -d -s hub-agent -c "$HUB_DIR" "HUB_DIR=$HUB_DIR HUB_PORT=$HUB_PORT $node hub/server.mjs"
+  fi
+  for _ in 1 2 3 4 5 6 7 8 9 10; do curl -fsS -o /dev/null -H "tailscale-user-login: x" "http://127.0.0.1:$HUB_PORT/" 2>/dev/null; [ $? -ne 7 ] && break; sleep 1; done
+  local dns; dns=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
+  local out; out=$(timeout 20 tailscale serve --bg "$HUB_PORT" 2>&1)
+  if tailscale serve status 2>/dev/null | grep -q "$HUB_PORT"; then
+    echo "Hub app: https://$dns/"
+    echo "  iPhone: open it in Safari → Share → Add to Home Screen, then open Hub from the Home Screen and turn on notifications."
+  else
+    echo "Hub agent is running, but tailscale serve isn't on yet (the iPhone app needs it for HTTPS and notifications):"
+    echo "$out" | sed 's/^/  /' | head -6
+    echo "  Enable HTTPS once at https://login.tailscale.com/admin/dns (HTTPS Certificates → Enable), then run: hub app"
+  fi
+}
+
 bg() { setsid nohup "$0" "$@" >>"$H/bg.log" 2>&1 </dev/null & }
 
 case "${1:-}" in
@@ -91,6 +139,7 @@ case "${1:-}" in
   pull) pull ;;
   push) shift; push "$@" ;;
   serve) serve ;;
+  app) app "${2:-}" ;;
   hook-start)   # stdout lands in the session's context
     if [ -s "$H/failed" ]; then echo "hub sync problems since last session:"; cat "$H/failed"; cat "$H/failed" >> "$H/failed.seen"; : > "$H/failed"; fi
     [ -f "$INDEX" ] || bg scan
@@ -118,6 +167,7 @@ case "${1:-}" in
     echo X=1 > "$T/w/.env"; push "$T/w" 2>/dev/null
     [ "$(git -C "$T/remote.git" log --oneline | wc -l)" = 2 ] || { echo "FAIL: .env was pushed"; exit 1; }
     tail -1 "$H/failed" | grep -q "$T/w" && sed -i '$d' "$H/failed"   # don't leave the test's warning for the next session
+    node --test "$HUB_DIR/hub/test.mjs" >/dev/null 2>&1 && echo "hub app logic tests ok" || { echo "FAIL: hub app logic tests (node --test hub/test.mjs)"; exit 1; }
     echo "selftest ok" ;;
   *) sed -n '2,10p' "$0"; exit 1 ;;
 esac

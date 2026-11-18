@@ -1,20 +1,47 @@
-# Project hub: phone → this repo → any project
+# Project hub: phone → any machine → any project
 
-From your iPhone you open one Claude Code session (this repo) and say "fix the camera jitter in battlefield". Claude finds the repo, reads its graph, does the work, and the repo ends up committed and pushed. No `cd`, no searching, no `git` by hand.
+Two ways in from your iPhone, both built on the same index, graphs and git sync:
+
+- **Hub app** (`hub/`): one Home Screen app that lists every machine on your tailnet running the hub. Each machine shows its projects, its conversations, and how much of each agent account is left. You say "fix the camera jitter in battlefield", and the machine finds the repo, runs the agent, commits and pushes, and notifies you. When Claude personal runs out it switches to Claude school, then to Codex, and the conversation carries across.
+- **Remote Control** (`hub serve`): Claude Code's own remote, in the Claude iOS app. Use it when you want to approve tool calls one by one.
 
 ## Use it
 
 | When | Do |
 |---|---|
-| Once per machine | `./bootstrap.sh` (installs `hub`, the hooks, the `$HOME` permission, first index). `sudo apt install jq tmux` if it says so |
-| Once per phone | Install the **Claude** app (iOS), log in with the same account as `claude-personal` |
-| Each time | `tailscale_up` → starts `hub serve` (tmux `hub`) and a background graph refresh |
-| On the phone | Claude app → **Code** → session **hub** → "do X for battlefield". Push notifications when Claude finishes or needs approval come from the app (`agentPushNotifEnabled: true`) |
-| Sync problems on your phone too (optional) | Install the **ntfy** iOS app, subscribe to a long random topic, `export HUB_NTFY_TOPIC=<topic>` in `~/.bashrc` |
+| Once per tailnet | Tailscale admin → [DNS](https://login.tailscale.com/admin/dns) → **HTTPS Certificates → Enable**. iOS only installs web apps and delivers their notifications over HTTPS |
+| Once per machine | `./bootstrap.sh` (installs `hub` and its hooks, the `$HOME` permission, the first index, and the app's deps). `sudo apt install jq tmux` if it says so. Log in once each: `claude-personal`, `claude-school`, `codex login` |
+| Each time | `tailscale_up` → `hub app` (systemd service `hub-agent` + `tailscale serve`), `hub serve` (Remote Control), background graph refresh |
+| Once per phone | Open the `https://<machine>.<tailnet>.ts.net/` link `hub app` prints, in Safari → Share → **Add to Home Screen**. Open Hub from the Home Screen → **Notifications → Turn on** |
+| On the phone | Hub → a machine → **+** → "do X for battlefield" (project and account default to Auto). Follow-ups go in the same thread |
+| Sync problems on your phone too (optional) | ntfy iOS app, subscribe to a long random topic, `export HUB_NTFY_TOPIC=<topic>` in `~/.bashrc` |
 
-Commands: `hub scan [--graph]`, `hub find <word>`, `hub pull`, `hub push <repo>...`, `hub serve`, `hub selftest`. Index: `~/.claude/hub/projects.tsv` (name, path, origin, graph). Failures: `~/.claude/hub/failed` (shown to the next session), background log `~/.claude/hub/bg.log`.
+Commands: `hub app [stop|logs]`, `hub scan [--graph]`, `hub find <word>`, `hub pull`, `hub push <repo>...`, `hub serve`, `hub selftest`. State lives in `~/.claude/hub/`: `projects.tsv` (index), `threads/`, `accounts.json` (limits and usage), `push.json` (VAPID keys and phone subscriptions, mode 600), `failed` (sync problems shown to the next session).
 
-Remote Control goes through Anthropic's relay, so the phone doesn't need Tailscale for it. Tailscale is the fallback: `ssh` from Termius/Blink, then `tmux attach -t hub`.
+## How the Hub app works
+
+```
+iPhone (Home Screen PWA, https://dell-linux.<tailnet>.ts.net)
+  │  tailscale serve (HTTPS, stamps your tailnet login)
+dell-linux: hub-agent (hub/server.mjs, :7787, loopback + tailnet IP only)
+  ├─ /api/d/dell-linux/...  → runs here
+  └─ /api/d/hp-linux/...    → proxied over the tailnet to hp-linux:7787 (peer checks `tailscale whois` = same owner)
+```
+
+- **Devices**: `tailscale status` lists peers; any peer answering `:7787/api/info` is a hub. Offline hubs stay listed with their last state.
+- **Routing**: a thread pinned to a project runs there. An Auto thread matches the first message against the project index (`hub/lib.mjs` `matchProject`: "battlefield" → `Github/dali/3dbattlefield`, "battlefield to vercel" → the `-vercel` sub-repo). With no match it runs in this repo, where CLAUDE.md's hub mode takes over.
+- **Accounts**: personal → school → Codex (`pickProvider`). Claude's stream reports each account's 5-hour usage (`rate_limit_event`). An account at 90% hands over early, and a rejected one is skipped until its reset time. Codex is used only when both Claude accounts are out, and the thread goes back to Claude as soon as one has room.
+- **Continuity**: switching between the Claude accounts copies the session transcript (`<config>/projects/<slug>/<id>.jsonl`) to the other profile and resumes the same session id. Switching to or from Codex hands over a transcript of the turns the new agent missed, plus any partial work. Each switch shows in the thread as a handoff line saying who took over and why.
+- **After every turn**: `hub push <repo>` (same owner allowlist and secret guard as the hooks), then a push notification to every phone subscribed on any hub ("battlefield · done", first line of the answer).
+- **Unattended**: turns run with `--permission-mode auto` (Claude) and `workspace-write` (Codex). Set `HUB_PERMISSION_MODE` in the unit to change it. Approvals aren't relayed to the app; use Remote Control for that.
+
+Verified on dell-linux (2026-11-17), all with real CLIs except where noted:
+- One thread ran personal → school → Codex → personal and kept its memory at every step.
+- Stand-in `claude-personal`/`claude-school` scripts sent real-format limit events. The account fallback and the handoff lines worked, and Codex finished the turn.
+- In the UI: the device list, accounts, a new thread, streaming output, the stop button state, and "Try again" on a limited account.
+- `hub selftest` covers git sync and `hub/test.mjs`.
+
+Not verified yet: proxying to a second hub (no other machine was online), and push notifications on a real iPhone (that needs the HTTPS step above).
 
 ## Open-source alternatives (not installed)
 

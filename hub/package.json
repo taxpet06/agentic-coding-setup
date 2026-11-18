@@ -1,0 +1,16 @@
+{
+  "name": "hub-agent",
+  "private": true,
+  "type": "module",
+  "description": "Per-device hub agent: serves the Hub PWA, runs Claude/Codex turns with account fallback, relays to tailnet peers",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test.mjs"
+  },
+  "dependencies": {
+    "web-push": "3.6.7"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}
