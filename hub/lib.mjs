@@ -6,6 +6,10 @@ export const CLAUDE = new Set(['personal', 'school']);
 // Claude model ids for --model ('' = the account's settings.json default). Codex keeps its config.toml model.
 export const MODELS = ['claude-opus-5-5', 'claude-fable-5-2', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']; // same levels for claude --effort and codex model_reasoning_effort
+// Claude --permission-mode values that make sense unattended ('manual' would just deny every prompt)
+export const MODES = ['auto', 'acceptEdits', 'plan', 'bypassPermissions'];
+// Codex has no permission modes; the sandbox is the nearest thing
+export const codexSandbox = mode => mode === 'plan' ? 'read-only' : mode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write';
 const NEAR = 0.9; // 5-hour window utilization where an account starts yielding to one with more room
 
 // accounts: { personal: { limitedUntil, utilization }, ... }  (ms epoch, 0..1)
@@ -73,6 +77,19 @@ export function limitResetFrom(text, now) {
 export const claudeSlug = cwd => cwd.replace(/[^a-zA-Z0-9]/g, '-');
 
 const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+const tail = (s, n) => (s.length > n ? '…' + s.slice(-(n - 1)) : s); // command output: the end is what matters
+const OUT = 3000, BODY = 4000;
+// what the app needs to draw a tool call: the command, the diff, the to-do list
+export function toolView(name, i = {}) {
+  const str = v => (typeof v === 'string' ? cut(v, BODY) : '');
+  if (name === 'Bash') return { cmd: str(i.command), desc: str(i.description) };
+  if (name === 'Edit') return { path: str(i.file_path), edits: [{ old: str(i.old_string), new: str(i.new_string) }] };
+  if (name === 'MultiEdit') return { path: str(i.file_path), edits: (i.edits ?? []).slice(0, 8).map(e => ({ old: str(e.old_string), new: str(e.new_string) })) };
+  if (name === 'Write') return { path: str(i.file_path), edits: [{ old: '', new: str(i.content) }] };
+  if (name === 'TodoWrite') return { todos: (i.todos ?? []).slice(0, 30).map(t => ({ text: cut(String(t.content ?? ''), 200), status: t.status })) };
+  return null;
+}
+const resultText = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x.text ?? '').join('\n') : '';
 const toolDetail = i => cut(String(i?.command ?? i?.file_path ?? i?.notebook_path ?? i?.pattern ?? i?.url ?? i?.query ??
   i?.description ?? i?.prompt ?? i?.skill ?? ''), 200);
 
@@ -84,7 +101,10 @@ export function parseClaude(line) {
     case 'assistant':
       return (o.message?.content ?? []).flatMap(c =>
         c.type === 'text' && c.text ? [{ kind: 'text', text: c.text }]
-          : c.type === 'tool_use' ? [{ kind: 'tool', name: c.name, detail: toolDetail(c.input) }] : []);
+          : c.type === 'tool_use' ? [{ kind: 'tool', id: c.id, name: c.name, detail: toolDetail(c.input), view: toolView(c.name, c.input) }] : []);
+    case 'user': // tool results come back as the "user" side of the conversation
+      return (Array.isArray(o.message?.content) ? o.message.content : []).flatMap(c => c.type === 'tool_result'
+        ? [{ kind: 'toolResult', id: c.tool_use_id, output: tail(resultText(c.content), OUT), failed: !!c.is_error }] : []);
     case 'stream_event': {
       const d = o.event?.delta;
       return o.event?.type === 'content_block_delta' && d?.type === 'text_delta' ? [{ kind: 'delta', text: d.text }] : [];
@@ -108,10 +128,13 @@ export function parseCodex(line) {
   const it = o.item;
   switch (o.type) {
     case 'thread.started': return [{ kind: 'session', id: o.thread_id }];
+    case 'item.started': // a command shows as running until it completes
+      return it?.type === 'command_execution' ? [{ kind: 'tool', id: it.id, name: 'Shell', detail: cut(it.command ?? '', 200), view: { cmd: cut(it.command ?? '', BODY) } }] : [];
     case 'item.completed':
       switch (it?.type) {
         case 'agent_message': return it.text ? [{ kind: 'text', text: it.text }] : [];
-        case 'command_execution': return [{ kind: 'tool', name: 'Shell', detail: cut(it.command ?? '', 200), ...(it.exit_code ? { failed: true } : {}) }];
+        case 'command_execution': return [{ kind: 'toolResult', id: it.id, output: tail(it.aggregated_output ?? '', OUT), failed: !!it.exit_code,
+          tool: { kind: 'tool', id: it.id, name: 'Shell', detail: cut(it.command ?? '', 200), view: { cmd: cut(it.command ?? '', BODY) } } }];
         case 'file_change': return [{ kind: 'tool', name: 'Edit', detail: cut((it.changes ?? []).map(c => c.path).join(', '), 200) }];
         case 'mcp_tool_call': return [{ kind: 'tool', name: `${it.server}.${it.tool}`, detail: '' }];
         case 'web_search': return [{ kind: 'tool', name: 'Search', detail: cut(it.query ?? '', 200) }];

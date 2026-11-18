@@ -5,7 +5,9 @@ const LABEL = { personal: 'Claude personal', school: 'Claude school', codex: 'Co
 const SHORT = { personal: 'Personal', school: 'School', codex: 'Codex' };
 // keep in step with lib.mjs MODELS / EFFORTS
 const MODELS = { 'claude-opus-5-5': 'Opus 5.5', 'claude-fable-5-2': 'Fable 5.2', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5' };
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const EFFORTS = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+// keep in step with lib.mjs MODES
+const MODES = { auto: 'Auto mode', acceptEdits: 'Accept edits', plan: 'Plan only', bypassPermissions: 'Bypass permissions' };
 
 // ---------- tiny DOM kit (text always goes in as text nodes; only md() output is HTML, and it escapes) ----------
 function h(tag, attrs, ...kids) {
@@ -284,18 +286,18 @@ function providerSelect(value = '') {
   return h('select', { 'aria-label': 'Account' }, h('option', { value: '' }, 'Auto account'),
     PROVIDERS.map(p => h('option', { value: p, selected: p === value }, LABEL[p])));
 }
-// model applies to Claude turns (Codex keeps its own); effort applies to both
-function settingSelects(t, [m, e] = ['Default', 'Default']) {
-  return [h('select', { 'aria-label': 'Model' }, h('option', { value: '' }, m),
-      Object.entries(MODELS).map(([v, l]) => h('option', { value: v, selected: v === t?.model }, l))),
-    h('select', { 'aria-label': 'Effort' }, h('option', { value: '' }, e),
-      EFFORTS.map(v => h('option', { value: v, selected: v === t?.effort }, v)))];
+// model applies to Claude turns (Codex keeps its own), effort to both, permissions map to Codex's sandbox
+function settingSelects(t) {
+  const sel = (label, dflt, opts, v) => h('select', { 'aria-label': label }, dflt ? h('option', { value: '' }, dflt) : null,
+    Object.entries(opts).map(([k, l]) => h('option', { value: k, selected: k === v }, l)));
+  return { model: sel('Model', 'Default', MODELS, t?.model), effort: sel('Effort', 'Default', EFFORTS, t?.effort), mode: sel('Permissions', null, MODES, t?.mode ?? 'auto') };
 }
+const field = (label, el, cls = '') => h('label', { class: `field ${cls}` }, h('span', {}, label), el);
 function newThreadForm(id, projects, project, onClose) {
   const proj = h('select', { 'aria-label': 'Project' }, h('option', { value: '' }, 'Auto: from your message'),
     projects.map(p => h('option', { value: p.name, selected: p.name === project }, p.name.includes('/') ? `${short(p.name)} · ${p.name.slice(0, p.name.lastIndexOf('/'))}` : p.name)));
   const prov = providerSelect();
-  const [model, effort] = settingSelects();
+  const set = settingSelects();
   const text = h('textarea', { placeholder: project ? `What should happen in ${short(project)}?` : 'e.g. fix the camera jitter in battlefield', rows: 4, 'aria-label': 'Message' });
   const send = h('button', { class: 'btn', type: 'submit' }, icon('send', 'sm'), 'Start');
   const f = h('form', { class: 'new', onsubmit: async e => {
@@ -303,118 +305,219 @@ function newThreadForm(id, projects, project, onClose) {
     if (!text.value.trim()) return text.focus();
     send.disabled = true;
     try {
-      const t = await api(`${dev(id)}threads`, { method: 'POST', body: { text: text.value, project: proj.value || undefined, provider: prov.value || undefined, model: model.value, effort: effort.value } });
+      const t = await api(`${dev(id)}threads`, { method: 'POST', body: { text: text.value, project: proj.value || undefined, provider: prov.value || undefined,
+        model: set.model.value, effort: set.effort.value, mode: set.mode.value } });
       location.hash = `#/d/${encodeURIComponent(id)}/t/${t.id}`;
     } catch (err) { toast(err.message); send.disabled = false; }
   } },
-  h('div', { class: 'two' }, h('label', { class: 'field' }, h('span', {}, 'Project'), proj), h('label', { class: 'field' }, h('span', {}, 'Account'), prov),
-    h('label', { class: 'field' }, h('span', {}, 'Model'), model), h('label', { class: 'field' }, h('span', {}, 'Effort'), effort)),
+  h('div', { class: 'two' }, field('Project', proj, 'span2'), field('Account', prov), field('Permissions', set.mode), field('Model', set.model), field('Effort', set.effort)),
   text,
   h('div', { style: { display: 'flex', gap: '8px', 'justify-content': 'flex-end' } }, h('button', { class: 'btn quiet', type: 'button', onclick: onClose }, 'Cancel'), send));
   text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) f.requestSubmit(); });
   return f;
 }
 
+// ---------- tool calls ----------
+const TOOL = { Bash: 'Run', Shell: 'Run', Read: 'Read', Edit: 'Edit', MultiEdit: 'Edit', Write: 'Write', NotebookEdit: 'Edit notebook', Grep: 'Search', Glob: 'Find files',
+  WebFetch: 'Fetch', WebSearch: 'Web search', Search: 'Web search', Agent: 'Subagent', Task: 'Subagent', ToolSearch: 'Load tools' };
+const toolLabel = n => TOOL[n] ?? (n.startsWith('mcp__') ? n.slice(5).replace('__', ' · ') : n);
+const stepIcon = n => /bash|shell/i.test(n) ? 'term' : /edit|write/i.test(n) ? 'edit' : /read/i.test(n) ? 'file' : /grep|glob|search/i.test(n) ? 'search' : /web|fetch/i.test(n) ? 'globe' : /agent|task/i.test(n) ? 'graph' : 'step';
+const base = p => (p ?? '').split('/').pop();
+// a changed block: shared lines at either end become context, the middle shows as removed then added
+function diffLines(old, neu) {
+  const a = old ? old.split('\n') : [], b = neu ? neu.split('\n') : [];
+  let s = 0; while (s < a.length && s < b.length && a[s] === b[s]) s++;
+  let e = 0; while (e < a.length - s && e < b.length - s && a[a.length - 1 - e] === b[b.length - 1 - e]) e++;
+  const ctx = l => ({ k: 'ctx', l });
+  return [...a.slice(Math.max(0, s - 2), s).map(ctx), ...a.slice(s, a.length - e).map(l => ({ k: 'del', l })),
+    ...b.slice(s, b.length - e).map(l => ({ k: 'add', l })), ...a.slice(a.length - e, a.length - e + 2).map(ctx)];
+}
+function diffView(edits) {
+  const rows = edits.flatMap((x, i) => [...(i ? [{ k: 'gap', l: '' }] : []), ...diffLines(x.old, x.new)]);
+  const shown = rows.slice(0, 120);
+  return h('div', { class: 'diff', role: 'figure', 'aria-label': 'Changes' }, shown.map(r => h('div', { class: r.k }, h('span', { class: 'sg', 'aria-hidden': 'true' }, { add: '+', del: '−' }[r.k] ?? ''), r.l || ' ')),
+    rows.length > shown.length ? h('div', { class: 'more' }, `${rows.length - shown.length} more lines`) : null);
+}
+function stepDetail(it) {
+  if (it.view?.edits) {
+    const rows = it.view.edits.flatMap(x => diffLines(x.old, x.new));
+    const add = rows.filter(r => r.k === 'add').length, del = rows.filter(r => r.k === 'del').length;
+    return [base(it.view.path), ' ', add ? h('span', { class: 'plus num' }, `+${add}`) : null, del ? h('span', { class: 'minus num' }, ` −${del}`) : null];
+  }
+  if (it.view?.desc) return it.view.desc;
+  return /read|write|edit/i.test(it.name) ? base(it.detail) || it.detail : it.detail;
+}
+function toolBody(it) {
+  const v = it.view ?? {}, parts = [];
+  if (v.cmd) parts.push(h('pre', { class: 'term' }, h('span', { class: 'ps' }, '$ '), v.cmd, it.output ? h('span', { class: 'o' }, `\n${it.output}`) : null));
+  else if (v.edits) { parts.push(h('div', { class: 'path' }, v.path)); parts.push(diffView(v.edits)); if (it.failed && it.output) parts.push(h('pre', { class: 'term bad' }, it.output)); }
+  else if (it.output && (it.failed || !/^read$/i.test(it.name))) parts.push(h('pre', { class: `term${it.failed ? ' bad' : ''}` }, it.detail ? h('span', { class: 'ps' }, `${it.detail}\n`) : null, it.output));
+  return parts.length ? h('div', { class: 'body' }, parts) : null;
+}
+function toolStep(it, busy) {
+  const head = [icon(stepIcon(it.name), 'sm'), h('span', { class: 'n' }, toolLabel(it.name)), h('span', { class: 'd' }, stepDetail(it)),
+    busy ? h('span', { class: 'spin', role: 'img', 'aria-label': 'Running' }) : it.failed ? h('span', { class: 'flag' }, 'failed') : null];
+  const body = toolBody(it);
+  const cls = `step${it.failed ? ' failed' : ''}`;
+  return body ? h('details', { class: cls }, h('summary', {}, head), body) : h('div', { class: `${cls} flat` }, head);
+}
+function stepGroup(list, live) {
+  const failed = list.filter(i => i.failed).length;
+  const names = [...new Set(list.map(i => toolLabel(i.name)))].slice(0, 3).join(', ');
+  const busy = live && list.at(-1).output == null;
+  return h('details', { class: 'steps', open: live },
+    h('summary', {}, icon('chev', 'chev'), h('span', { class: 'sum' }, `${list.length} ${list.length === 1 ? 'step' : 'steps'} · ${names}`),
+      failed ? h('span', { class: 'flag' }, `${failed} failed`) : null, busy ? h('span', { class: 'spin', role: 'img', 'aria-label': 'Running' }) : null),
+    h('div', { class: 'list' }, list.map((it, i) => toolStep(it, busy && i === list.length - 1))));
+}
+function todoCard(todos) {
+  const done = todos.filter(x => x.status === 'completed').length;
+  return h('div', { class: 'todo' }, h('div', { class: 'hd num' }, h('b', {}, 'Plan'), ` · ${done} of ${todos.length} done`),
+    h('ul', {}, todos.map(x => h('li', { class: x.status }, h('span', { class: 'box', 'aria-hidden': 'true' }, x.status === 'completed' ? icon('check', 'xs') : null),
+      h('span', {}, x.text), x.status !== 'pending' ? h('span', { class: 'vh' }, x.status === 'completed' ? ' (done)' : ' (in progress)') : null))));
+}
+const HIDDEN = new Set(['Skill', 'TodoWrite']); // drawn as the skill labels and the plan card instead
+
 // ---------- thread ----------
 function thread(id, tid) {
-  let t = null, live = '', liveTurn = null;
+  let t = null, live = '', liveTurn = null, settingsShown = false;
   const turnsEl = h('div');
   const bandWhat = h('div', { class: 'what num' }, 'Loading…');
-  const stop = h('button', { class: 'btn danger sm', hidden: true, onclick: async () => { stop.disabled = true; try { await api(`${dev(id)}threads/${tid}/stop`, { method: 'POST' }); } catch (e) { toast(e.message); } } }, icon('stop', 'sm'), 'Stop');
+  const stopTurn = async () => { stop.disabled = true; try { await api(`${dev(id)}threads/${tid}/stop`, { method: 'POST' }); } catch (e) { toast(e.message); stop.disabled = false; } };
+  const stop = h('button', { class: 'btn danger sm', hidden: true, onclick: stopTurn }, icon('stop', 'sm'), 'Stop');
   const band = h('div', { class: 'band', role: 'status' }, bandWhat, stop);
   const titleEl = h('h1', { class: 'title clamp', style: { 'font-size': '24px' } }, '');
   const where = h('p', { class: 'subtitle' }, '');
   const archive = navIcon('archive', 'Archive thread', async () => {
     try { await api(`${dev(id)}threads/${tid}`, { method: 'DELETE' }); location.hash = `#/d/${encodeURIComponent(id)}`; } catch (e) { toast(e.message); }
   });
+
+  // composer: settings, queue, input, send (which turns into Stop while a turn runs and nothing is typed)
   const prov = providerSelect();
-  const [model, effort] = settingSelects(null, ['Model', 'Effort']); // the composer has no field labels
+  const set = settingSelects();
+  const optsSum = h('span', { class: 'sum' });
+  const opts = h('details', { class: 'opts' }, h('summary', {}, icon('tune', 'sm'), optsSum, icon('chev', 'chev')),
+    h('div', { class: 'grid' }, field('Account', prov), field('Permissions', set.mode), field('Model', set.model), field('Effort', set.effort)));
+  const paintOpts = () => { optsSum.textContent = [prov.value ? SHORT[prov.value] : 'Auto account', MODELS[set.model.value] ?? 'Default model',
+    set.effort.value ? `${EFFORTS[set.effort.value]} effort` : 'Default effort', MODES[set.mode.value]].join(' · '); };
+  for (const s of [prov, set.model, set.effort, set.mode]) s.addEventListener('change', paintOpts);
+  const queueEl = h('div', { class: 'queue', hidden: true });
   const input = h('textarea', { rows: 1, placeholder: 'Follow up…', 'aria-label': 'Message' });
   const send = h('button', { class: 'btn send', type: 'submit', 'aria-label': 'Send' }, icon('send'));
+  let busy = false;
+  const stopMode = () => t?.status === 'running' && !input.value.trim();
   const form = h('form', { class: 'composer', onsubmit: async e => {
     e.preventDefault();
+    if (busy) return;
+    if (stopMode()) return stopTurn();
     const text = input.value.trim();
-    if (!text || t?.status === 'running') return;
-    send.disabled = true;
-    try { await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: model.value, effort: effort.value } }); input.value = ''; grow(); prov.value = ''; }
-    catch (err) { toast(err.message); }
-    send.disabled = false;
-  } }, h('div', { class: 'opts' }, prov, model, effort), h('div', { class: 'in' }, input, send));
+    if (!text) return input.focus();
+    busy = true; send.disabled = true;
+    try {
+      await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: set.model.value, effort: set.effort.value, mode: set.mode.value } });
+      input.value = ''; grow(); prov.value = ''; paintOpts(); opts.open = false;
+    } catch (err) { toast(err.message); }
+    busy = false; send.disabled = false; paintSend();
+  } }, h('div', { class: 'wrap' }, opts, queueEl, h('div', { class: 'in' }, input, send)));
   const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, innerHeight * 0.4)}px`; };
-  input.addEventListener('input', grow);
+  input.addEventListener('input', () => { grow(); paintSend(); });
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) form.requestSubmit(); });
   mount(h('main', { class: 'screen has-composer' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}`, label: id }, mid: '', end: [archive] }), titleEl, where, band, turnsEl), form);
   const midEl = app.querySelector('.bar .mid');
+  const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${form.offsetHeight}px`));
+  ro.observe(form); onCleanup(() => ro.disconnect());
 
   const nearBottom = () => innerHeight + scrollY >= document.documentElement.scrollHeight - 140;
   const stick = f => { const was = nearBottom(); f(); if (was) requestAnimationFrame(() => scrollTo({ top: document.documentElement.scrollHeight })); };
 
+  function paintSend() {
+    const running = t?.status === 'running', s = stopMode();
+    send.classList.toggle('stop', s);
+    send.setAttribute('aria-label', s ? 'Stop' : running ? 'Queue message' : 'Send');
+    send.replaceChildren(icon(s ? 'stop' : 'send'));
+    input.placeholder = running ? 'Queue a follow-up…' : 'Follow up…';
+  }
+  function paintQueue() {
+    const q = t?.queue ?? [];
+    queueEl.hidden = !q.length;
+    queueEl.replaceChildren(...q.map((m, i) => h('div', { class: 'q' },
+      h('span', { class: 'k' }, i ? `Then` : 'Next'),
+      h('span', { class: 't' }, m.text),
+      h('button', { class: 'qb', type: 'button', 'aria-label': 'Edit queued message', onclick: async () => {
+        try { await api(`${dev(id)}threads/${tid}/queue/${m.id}`, { method: 'DELETE' }); input.value = input.value.trim() ? `${input.value}\n${m.text}` : m.text; grow(); paintSend(); input.focus(); } catch (e) { toast(e.message); }
+      } }, icon('edit', 'sm')),
+      h('button', { class: 'qb', type: 'button', 'aria-label': 'Remove queued message', onclick: async () => {
+        try { await api(`${dev(id)}threads/${tid}/queue/${m.id}`, { method: 'DELETE' }); } catch (e) { toast(e.message); }
+      } }, icon('x', 'sm')))));
+  }
   function paintBand() {
     if (!t) return;
     const last = t.turns.at(-1);
     const running = t.status === 'running';
     band.className = `band${running ? ' running' : last?.status === 'failed' ? ' failed' : ''}`;
-    const who = last?.provider ? LABEL[last.provider] : 'picking an account';
+    const who = last?.provider ? SHORT[last.provider] : running ? 'picking an account' : '';
     const word = running ? 'Working' : { done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' }[last?.status] ?? 'Idle';
     const time = running ? dur(Date.now() - last.startedAt) : last?.endedAt ? (ago(last.endedAt) === 'now' ? 'just now' : `${ago(last.endedAt)} ago`) : '';
-    bandWhat.replaceChildren(h('b', {}, word), ` · ${who}${time ? ` · ${time}` : ''}`);
-    stop.hidden = !running; stop.disabled = false;
-    archive.disabled = running; send.disabled = running;
-    input.placeholder = running ? 'Wait for this turn, or stop it' : 'Follow up…';
+    const q = t.queue?.length ? `${t.queue.length} queued` : '';
+    bandWhat.replaceChildren(h('b', {}, word), [who, time, q].filter(Boolean).map(s => ` · ${s}`).join(''));
+    stop.hidden = !running; if (!running) stop.disabled = false;
+    archive.disabled = running;
+    paintSend();
   }
   function renderTurn(turn) {
     if (turn.role === 'user') return h('div', { class: 'msg-user', 'data-id': turn.id }, turn.text);
     const el = h('div', { class: 'turn', 'data-id': turn.id });
-    // name whoever started the turn; each handoff seam names who took over after that
+    // name whoever started the turn and how it ran; each handoff seam names who took over after that
     const first = turn.items.find(i => i.kind === 'seam')?.from ?? turn.provider;
-    if (first) el.append(h('div', { class: `who-line c-${first}` }, h('span', { class: 'dot' }), LABEL[first]));
+    const how = [modelOf(turn, first), turn.effort ? `${EFFORTS[turn.effort]} effort` : null, turn.mode && turn.mode !== 'auto' ? MODES[turn.mode] : null].filter(Boolean);
+    if (first) el.append(h('div', { class: `who-line c-${first}` }, h('span', { class: 'dot' }), LABEL[first], how.length ? h('span', { class: 'how' }, ` · ${how.join(' · ')}`) : null));
     const skills = [...new Set(turn.items.filter(i => i.kind === 'tool' && i.name === 'Skill' && i.detail).map(i => i.detail))];
     if (skills.length) el.append(h('div', { class: 'skills', 'aria-label': 'Skills loaded' }, skills.map(s => h('span', { class: 'tag' }, s))));
-    let steps = null;
-    const closeSteps = () => { steps = null; };
+    const plan = turn.items.findLast(i => i.kind === 'tool' && i.name === 'TodoWrite' && i.view?.todos?.length);
+    if (plan) el.append(todoCard(plan.view.todos));
+    const running = turn.status === 'running';
+    let group = null;
+    const flush = liveGroup => { if (group) el.append(stepGroup(group, liveGroup)); group = null; };
     for (const it of turn.items) {
-      if (it.kind === 'tool') {
-        if (!steps) { steps = { list: [], el: h('details', { class: 'steps' }) }; el.append(steps.el); }
-        steps.list.push(it);
-        continue;
-      }
-      if (steps) fillSteps(steps); closeSteps();
+      if (it.kind === 'tool') { if (!HIDDEN.has(it.name)) (group ??= []).push(it); continue; }
+      flush(false);
       if (it.kind === 'text') el.append(h('div', { class: 'prose', html: md(it.text) }));
       else if (it.kind === 'seam') el.append(h('div', { class: 'seam', role: 'note' }, h('span', { class: 'lab' },
         h('span', { class: 'dot from', style: { '--cf': `var(--${it.from})` } }), '→', h('span', { class: 'dot to', style: { '--ct': `var(--${it.to})` } }),
         ` ${LABEL[it.to]} took over · ${it.reason}`)));
       else if (it.kind === 'note') el.append(it.tone === 'error' ? h('div', {}, h('span', { class: 'stamp bad' }, 'Failed'), h('div', { class: 'note bad' }, it.text)) : h('p', { class: 'note' }, it.text));
     }
-    if (steps) fillSteps(steps, turn.status === 'running');
-    if (turn.status === 'running' && liveTurn === turn.id && live) el.append(h('div', { class: 'prose live', html: md(live) }));
-    else if (turn.status === 'running') el.append(h('p', { class: 'note live' }, 'Working'));
+    flush(running);
+    if (running && liveTurn === turn.id && live) el.append(h('div', { class: 'prose live', html: md(live) }));
+    else if (running) el.append(h('p', { class: 'note live' }, 'Working'));
     if (turn.status === 'stopped') el.append(h('span', { class: 'stamp muted' }, 'Stopped'));
     if (turn.status === 'interrupted') el.append(h('div', {}, h('span', { class: 'stamp muted' }, 'Interrupted'), h('p', { class: 'note' }, 'The hub restarted during this turn. Send a follow-up to continue.')));
+    const text = turn.items.filter(i => i.kind === 'text').map(i => i.text).join('\n\n');
+    if (!running && text) {
+      const copy = h('button', { class: 'act', type: 'button', onclick: async () => {
+        try { await navigator.clipboard.writeText(text); copy.replaceChildren(icon('check', 'sm'), 'Copied'); setTimeout(() => copy.replaceChildren(icon('copy', 'sm'), 'Copy'), 1600); } catch { toast('Couldn’t copy'); }
+      } }, icon('copy', 'sm'), 'Copy');
+      el.append(h('div', { class: 'acts' }, copy));
+    }
     return el;
   }
-  function fillSteps(s, open = false) {
-    const names = [...new Set(s.list.map(i => i.name))].slice(0, 3).join(', ');
-    const failed = s.list.filter(i => i.failed).length;
-    s.el.open = open;
-    s.el.append(h('summary', {}, icon('chev', 'chev'), `${s.list.length} ${s.list.length === 1 ? 'step' : 'steps'} · ${names}${failed ? ` · ${failed} failed` : ''}`),
-      s.list.map(i => h('div', { class: `step${i.failed ? ' failed' : ''}` }, icon(stepIcon(i.name), 'sm'), h('span', { class: 'n' }, i.name), h('span', { class: 'd' }, i.detail))));
-  }
-  const stepIcon = n => /bash|shell/i.test(n) ? 'term' : /edit|write/i.test(n) ? 'edit' : /read/i.test(n) ? 'file' : /grep|glob|search/i.test(n) ? 'search' : /web|fetch/i.test(n) ? 'globe' : 'step';
+  const modelOf = (turn, p) => p && p !== 'codex' && turn.model ? MODELS[turn.model] : null;
   function repaintTurn(turn) {
     const old = turnsEl.querySelector(`[data-id="${turn.id}"]`);
     const keepOpen = [...(old?.querySelectorAll('details') ?? [])].map(d => d.open);
     const fresh = renderTurn(turn);
-    fresh.querySelectorAll('details').forEach((d, i) => { if (keepOpen[i]) d.open = true; });
+    // keep whatever the reader opened or closed; new groups take their own default
+    fresh.querySelectorAll('details').forEach((d, i) => { if (i < keepOpen.length) d.open = keepOpen[i]; });
     stick(() => (old ? old.replaceWith(fresh) : turnsEl.append(fresh)));
   }
+  const whereText = () => `${t.project?.name ?? (t.auto ? 'Auto project' : 'hub')} · ${id}`;
   function paintAll() {
     titleEl.textContent = t.title; midEl.textContent = t.title;
-    where.textContent = `${t.project?.name ?? (t.auto ? 'Auto project' : 'hub')} · ${id}`;
+    where.textContent = whereText();
     stick(() => turnsEl.replaceChildren(...t.turns.map(renderTurn)));
-    if (!settingsShown) { model.value = t.model ?? ''; effort.value = t.effort ?? ''; settingsShown = true; } // later snapshots mustn't undo an unsent pick
-    paintBand();
+    if (!settingsShown) { set.model.value = t.model ?? ''; set.effort.value = t.effort ?? ''; set.mode.value = t.mode ?? 'auto'; settingsShown = true; } // later snapshots mustn't undo an unsent pick
+    paintOpts(); paintQueue(); paintBand();
   }
-  let settingsShown = false;
 
   const es = new EventSource(`/api/${dev(id)}threads/${tid}/events`);
   onCleanup(() => es.close());
@@ -422,10 +525,13 @@ function thread(id, tid) {
     const ev = JSON.parse(e.data);
     if (ev.type === 'snapshot') { t = ev.thread; live = ''; paintAll(); return; }
     if (!t) return;
+    if (ev.type === 'queue') { t.queue = ev.queue; paintQueue(); paintBand(); return; }
     const turn = t.turns.find(x => x.id === ev.turnId || x.id === ev.turn?.id);
-    if (ev.type === 'item' && turn) { turn.items.push(ev.item); if (ev.item.kind === 'text') live = ''; repaintTurn(turn); }
-    else if (ev.type === 'delta' && turn) { if (liveTurn !== turn.id) { liveTurn = turn.id; live = ''; } live += ev.text; repaintTurn(turn); }
-    else if (ev.type === 'turn' && turn) { Object.assign(turn, ev.turn, { items: turn.items }); t.status = ev.thread.status; t.provider = ev.thread.provider; t.project = ev.thread.project; if (turn.status !== 'running') live = ''; repaintTurn(turn); paintBand(); where.textContent = `${t.project?.name ?? 'Auto project'} · ${id}`; }
+    if (!turn) return;
+    if (ev.type === 'item') { turn.items.push(ev.item); if (ev.item.kind === 'text') live = ''; repaintTurn(turn); }
+    else if (ev.type === 'patch') { turn.items[ev.index] = ev.item; repaintTurn(turn); }
+    else if (ev.type === 'delta') { if (liveTurn !== turn.id) { liveTurn = turn.id; live = ''; } live += ev.text; repaintTurn(turn); }
+    else if (ev.type === 'turn') { Object.assign(turn, ev.turn, { items: turn.items }); t.status = ev.thread.status; t.provider = ev.thread.provider; t.project = ev.thread.project; if (turn.status !== 'running') live = ''; repaintTurn(turn); paintBand(); where.textContent = whereText(); }
   };
   es.onerror = () => { if (!t) bandWhat.textContent = 'Can’t reach this thread. Retrying…'; };
   every(1000, () => t?.status === 'running' && paintBand());

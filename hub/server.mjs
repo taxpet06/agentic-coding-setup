@@ -144,7 +144,7 @@ function saveThread(t, now = false) {
 const summary = t => {
   const last = t.turns.at(-1);
   const lastText = [...t.turns].reverse().flatMap(x => (x.items ?? []).filter(i => i.kind === 'text')).at(0)?.text ?? '';
-  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, updatedAt: t.updatedAt,
+  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, mode: t.mode ?? null, queued: t.queue?.length ?? 0, updatedAt: t.updatedAt,
     createdAt: t.createdAt, lastStatus: last?.status ?? null, preview: lastText.slice(0, 160), turns: t.turns.length };
 };
 const asTranscript = turns => turns.map(t => t.role === 'user' ? { role: 'user', text: t.text }
@@ -189,14 +189,14 @@ function runProvider(p, t, turn, prompt, cwd, resumeId) {
   if (isClaude) {
     cmd = which(`claude-${p}`) ?? 'claude';
     env = { ...process.env, CLAUDE_CONFIG_DIR: path.join(HOME, `.claude-${p}`) };
-    args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', PERMISSION_MODE];
+    args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', t.mode || PERMISSION_MODE];
     if (resumeId) args.push('--resume', resumeId);
     const model = t.model || process.env.HUB_CLAUDE_MODEL;
     if (model) args.push('--model', model);
     if (t.effort) args.push('--effort', t.effort);
   } else {
     cmd = 'codex';
-    const cfg = ['-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true'];
+    const cfg = ['-c', `sandbox_mode="${lib.codexSandbox(t.mode || PERMISSION_MODE)}"`, '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true'];
     if (t.effort) cfg.push('-c', `model_reasoning_effort="${t.effort}"`);
     if (cwd === HUB_DIR) cfg.push('-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(HOME)}]`);
     args = resumeId ? ['exec', 'resume', resumeId, '--json', '--skip-git-repo-check', ...cfg, '-'] : ['exec', '--json', '--skip-git-repo-check', ...cfg, '-'];
@@ -215,7 +215,12 @@ function runProvider(p, t, turn, prompt, cwd, resumeId) {
           else t.sessions.codex = { id: ev.id, seen: t.sessions.codex?.seen ?? 0 };
           saveThread(t);
         } else if (ev.kind === 'text') addItem(t, turn, { kind: 'text', text: ev.text });
-        else if (ev.kind === 'tool') addItem(t, turn, { kind: 'tool', name: ev.name, detail: ev.detail, ...(ev.failed ? { failed: true } : {}) });
+        else if (ev.kind === 'tool') addItem(t, turn, { kind: 'tool', id: ev.id, name: ev.name, detail: ev.detail, view: ev.view ?? undefined });
+        else if (ev.kind === 'toolResult') {
+          const i = turn.items.findIndex(x => x.kind === 'tool' && x.id === ev.id);
+          if (i < 0) { if (ev.tool) addItem(t, turn, { ...ev.tool, output: ev.output, failed: ev.failed || undefined }); }
+          else { Object.assign(turn.items[i], { output: ev.output, failed: ev.failed || undefined }); saveThread(t); emit(t.id, { type: 'patch', turnId: turn.id, index: i, item: turn.items[i] }); }
+        }
         else if (ev.kind === 'delta') emit(t.id, { type: 'delta', turnId: turn.id, text: ev.text });
         else if (ev.kind === 'usage') { noteUsage(p, ev); if (ev.status === 'rejected') limited = true; }
         else if (ev.kind === 'result') final = ev;
@@ -285,7 +290,7 @@ async function runTurn(t, turn, force) {
       t.sessions[family] = null;
       res = await runProvider(p, t, turn, hint + lib.contextFor(transcript, 0) + userText, cwd, null);
     }
-    if (job.stopped) { turn.status = 'stopped'; return; }
+    if (job.stopped) { if (t.sessions[family]) t.sessions[family].seen = t.turns.length; turn.status = 'stopped'; return; } // the session saw this request even if cut short
     if (res.limited) {
       const known = effectiveAccounts()[p]?.resetsAt;
       markLimited(p, lib.limitResetFrom(res.text, Date.now()) ?? (known > Date.now() ? known : Date.now() + 3_600_000));
@@ -299,13 +304,35 @@ async function runTurn(t, turn, force) {
   }
 }
 
-// model/effort stick to the thread until changed; '' means the default
-function setSettings(t, p) {
-  for (const [k, ok] of [['model', lib.MODELS], ['effort', lib.EFFORTS]]) {
+// model/effort/mode stick to the thread until changed; '' means the default
+function parseSettings(p) {
+  const out = {};
+  for (const [k, ok] of [['model', lib.MODELS], ['effort', lib.EFFORTS], ['mode', lib.MODES]]) {
     if (p[k] === undefined) continue;
     if (p[k] !== '' && !ok.includes(p[k])) throw new HttpError(400, `Unknown ${k} ${p[k]}`);
-    t[k] = p[k] || null;
+    out[k] = p[k] || null;
   }
+  return out;
+}
+
+// Every message goes through the thread's queue: it runs now if the thread is idle, otherwise after the current
+// turn ends (done, failed or stopped), in order. Settings travel with each message and apply when it starts.
+function enqueue(t, p) {
+  const text = str(p.text)?.trim();
+  if (!text) throw new HttpError(400, 'Message is empty.');
+  if (p.provider && !lib.PROVIDERS.includes(p.provider)) throw new HttpError(400, `Unknown account ${p.provider}`);
+  t.queue ??= [];
+  if (t.queue.length >= 20) throw new HttpError(429, 'Twenty messages are already queued here.');
+  t.queue.push({ id: crypto.randomUUID(), text, provider: p.provider || null, settings: parseSettings(p), at: Date.now() });
+  drain(t);
+}
+function queueChanged(t) { saveThread(t, true); emit(t.id, { type: 'queue', queue: t.queue }); }
+function drain(t) {
+  if (running.has(t.id) || !t.queue?.length) return queueChanged(t);
+  const q = t.queue.shift();
+  Object.assign(t, q.settings);
+  queueChanged(t);
+  startTurn(t, q.text, q.provider || undefined);
 }
 
 function startTurn(t, text, force) {
@@ -318,7 +345,8 @@ function startTurn(t, text, force) {
     const m = lib.matchProject(text, projects());
     if (m) t.project = { name: m.name, path: m.path };
   }
-  const turn = { id: crypto.randomUUID(), role: 'assistant', provider: null, status: 'running', items: [], startedAt: now };
+  const turn = { id: crypto.randomUUID(), role: 'assistant', provider: null, status: 'running', items: [], startedAt: now,
+    model: t.model ?? null, effort: t.effort ?? null, mode: t.mode ?? null };
   t.turns.push(turn);
   if (t.auto && t.turns.length === 2) turn.items.push({ kind: 'note', text: t.project ? `Working in ${t.project.name}` : 'No project named, so working from the hub repo. The agent will look the project up.' });
   t.status = 'running';
@@ -338,7 +366,9 @@ function startTurn(t, text, force) {
       const last = turn.items.filter(i => i.kind === 'text' || i.kind === 'note').at(-1)?.text ?? '';
       const proj = (t.project?.name ?? 'hub').split('/').pop();
       const verb = { done: 'done', failed: 'failed', stopped: 'stopped' }[turn.status] ?? turn.status;
-      if (turn.status !== 'stopped') notify({ title: `${proj} · ${verb}`, body: `${last.replace(/\s+/g, ' ').slice(0, 150)}${turn.provider ? ` (${LABEL[turn.provider]})` : ''}`, tag: t.id, url: `/#/d/${me.id}/t/${t.id}` });
+      // quiet until it matters: with more queued, only a failure is worth a buzz
+      if (turn.status === 'failed' || (turn.status === 'done' && !t.queue?.length)) notify({ title: `${proj} · ${verb}`, body: `${last.replace(/\s+/g, ' ').slice(0, 150)}${turn.provider ? ` (${LABEL[turn.provider]})` : ''}`, tag: t.id, url: `/#/d/${me.id}/t/${t.id}` });
+      try { drain(t); } catch (e) { log("queue failed", e); } // the next queued message, if any
     }
   })();
 }
@@ -435,10 +465,9 @@ async function local(req, res, parts) {
     }
     const t = { id: crypto.randomUUID(), title: (text ?? '').trim().replace(/\s+/g, ' ').slice(0, 80) || 'New thread', auto: !project,
       project: project ? { name: project.name, path: project.path } : null, createdAt: Date.now(), updatedAt: Date.now(),
-      status: 'idle', provider: null, model: null, effort: null, sessions: { claude: null, codex: null }, turns: [] };
-    setSettings(t, p);
+      status: 'idle', provider: null, model: null, effort: null, mode: null, queue: [], sessions: { claude: null, codex: null }, turns: [] };
     threads.set(t.id, t);
-    try { startTurn(t, text, p.provider || undefined); } catch (e) { threads.delete(t.id); throw e; }
+    try { enqueue(t, p); } catch (e) { threads.delete(t.id); throw e; }
     return json(res, 201, t);
   }
   const t = a === 'threads' && b ? threads.get(b) : null;
@@ -450,7 +479,12 @@ async function local(req, res, parts) {
     await fsp.rename(path.join(THREADS, `${t.id}.json`), path.join(THREADS, 'archive', `${t.id}.json`)).catch(() => {});
     return json(res, 200, { ok: true });
   }
-  if (t && c === 'messages' && m === 'POST') { const p = await body(req); if (running.has(t.id)) throw new HttpError(409, 'This thread is still working. Stop it first, or wait.'); setSettings(t, p); startTurn(t, str(p.text), p.provider || undefined); return json(res, 202, summary(t)); }
+  if (t && c === 'messages' && m === 'POST') { enqueue(t, await body(req)); return json(res, 202, summary(t)); }
+  if (t && c === 'queue' && parts[3] && m === 'DELETE') { // drop one queued message
+    t.queue = (t.queue ?? []).filter(q => q.id !== parts[3]);
+    queueChanged(t);
+    return json(res, 200, { queue: t.queue });
+  }
   if (t && c === 'stop' && m === 'POST') {
     const job = running.get(t.id);
     if (job) { job.stopped = true; if (job.child) killTree(job.child); }

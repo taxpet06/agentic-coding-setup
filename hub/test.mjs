@@ -57,9 +57,14 @@ test('parseClaude normalizes stream-json', () => {
   const ev = l => parseClaude(JSON.stringify(l));
   assert.deepEqual(ev({ type: 'system', subtype: 'init', session_id: 's1' }), [{ kind: 'session', id: 's1' }]);
   assert.deepEqual(ev({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls -la' } }] } }),
-    [{ kind: 'text', text: 'hi' }, { kind: 'tool', name: 'Bash', detail: 'ls -la' }]);
-  assert.deepEqual(ev({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'impeccable' } }] } }),
-    [{ kind: 'tool', name: 'Skill', detail: 'impeccable' }], 'skill name feeds the skill labels in the app');
+    [{ kind: 'text', text: 'hi' }, { kind: 'tool', id: undefined, name: 'Bash', detail: 'ls -la', view: { cmd: 'ls -la', desc: '' } }]);
+  assert.equal(ev({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'impeccable' } }] } })[0].detail, 'impeccable', 'skill name feeds the skill labels in the app');
+  assert.deepEqual(ev({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: '/a.js', old_string: 'x', new_string: 'y' } }] } })[0].view,
+    { path: '/a.js', edits: [{ old: 'x', new: 'y' }] });
+  assert.deepEqual(ev({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'e1', content: [{ type: 'text', text: 'ok' }], is_error: true }] } }),
+    [{ kind: 'toolResult', id: 'e1', output: 'ok', failed: true }]);
+  assert.equal(ev({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: 'x'.repeat(5000) }] } })[0].output.length, 3000, 'output keeps its tail');
+  assert.deepEqual(ev({ type: 'user', message: { content: 'plain prompt' } }), []);
   assert.deepEqual(ev({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'h' } } }), [{ kind: 'delta', text: 'h' }]);
   assert.deepEqual(ev({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', resetsAt: 1800003600, unifiedWindows: { five_hour: { utilization: 0.91 } } } }),
     [{ kind: 'usage', status: 'allowed_warning', utilization: 0.91, resetsAt: 1800003600_000 }]);
@@ -74,7 +79,9 @@ test('parseCodex normalizes exec --json', () => {
   const ev = l => parseCodex(JSON.stringify(l));
   assert.deepEqual(ev({ type: 'thread.started', thread_id: 't1' }), [{ kind: 'session', id: 't1' }]);
   assert.deepEqual(ev({ type: 'item.completed', item: { type: 'agent_message', text: 'pong' } }), [{ kind: 'text', text: 'pong' }]);
-  assert.deepEqual(ev({ type: 'item.completed', item: { type: 'command_execution', command: 'npm test', exit_code: 1 } }), [{ kind: 'tool', name: 'Shell', detail: 'npm test', failed: true }]);
+  assert.equal(ev({ type: 'item.started', item: { id: 'c1', type: 'command_execution', command: 'npm test' } })[0].kind, 'tool');
+  const done = ev({ type: 'item.completed', item: { id: 'c1', type: 'command_execution', command: 'npm test', aggregated_output: 'FAIL', exit_code: 1 } })[0];
+  assert.deepEqual([done.kind, done.id, done.output, done.failed, done.tool.name], ['toolResult', 'c1', 'FAIL', true, 'Shell']);
   assert.deepEqual(ev({ type: 'item.completed', item: { type: 'file_change', changes: [{ path: 'a.js' }, { path: 'b.js' }] } }), [{ kind: 'tool', name: 'Edit', detail: 'a.js, b.js' }]);
   assert.deepEqual(ev({ type: 'turn.completed' }), [{ kind: 'result', ok: true, text: null, limited: false }]);
   assert.equal(ev({ type: 'turn.failed', error: { message: "You've hit your usage limit." } })[0].limited, true);
