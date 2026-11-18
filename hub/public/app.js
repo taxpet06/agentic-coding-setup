@@ -3,6 +3,9 @@ const app = document.getElementById('app');
 const PROVIDERS = ['personal', 'school', 'codex'];
 const LABEL = { personal: 'Claude personal', school: 'Claude school', codex: 'Codex' };
 const SHORT = { personal: 'Personal', school: 'School', codex: 'Codex' };
+// keep in step with lib.mjs MODELS / EFFORTS
+const MODELS = { 'claude-opus-5-5': 'Opus 5.5', 'claude-fable-5-2': 'Fable 5.2', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5' };
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 // ---------- tiny DOM kit (text always goes in as text nodes; only md() output is HTML, and it escapes) ----------
 function h(tag, attrs, ...kids) {
@@ -281,10 +284,18 @@ function providerSelect(value = '') {
   return h('select', { 'aria-label': 'Account' }, h('option', { value: '' }, 'Auto account'),
     PROVIDERS.map(p => h('option', { value: p, selected: p === value }, LABEL[p])));
 }
+// model applies to Claude turns (Codex keeps its own); effort applies to both
+function settingSelects(t, [m, e] = ['Default', 'Default']) {
+  return [h('select', { 'aria-label': 'Model' }, h('option', { value: '' }, m),
+      Object.entries(MODELS).map(([v, l]) => h('option', { value: v, selected: v === t?.model }, l))),
+    h('select', { 'aria-label': 'Effort' }, h('option', { value: '' }, e),
+      EFFORTS.map(v => h('option', { value: v, selected: v === t?.effort }, v)))];
+}
 function newThreadForm(id, projects, project, onClose) {
   const proj = h('select', { 'aria-label': 'Project' }, h('option', { value: '' }, 'Auto: from your message'),
     projects.map(p => h('option', { value: p.name, selected: p.name === project }, p.name.includes('/') ? `${short(p.name)} · ${p.name.slice(0, p.name.lastIndexOf('/'))}` : p.name)));
   const prov = providerSelect();
+  const [model, effort] = settingSelects();
   const text = h('textarea', { placeholder: project ? `What should happen in ${short(project)}?` : 'e.g. fix the camera jitter in battlefield', rows: 4, 'aria-label': 'Message' });
   const send = h('button', { class: 'btn', type: 'submit' }, icon('send', 'sm'), 'Start');
   const f = h('form', { class: 'new', onsubmit: async e => {
@@ -292,11 +303,12 @@ function newThreadForm(id, projects, project, onClose) {
     if (!text.value.trim()) return text.focus();
     send.disabled = true;
     try {
-      const t = await api(`${dev(id)}threads`, { method: 'POST', body: { text: text.value, project: proj.value || undefined, provider: prov.value || undefined } });
+      const t = await api(`${dev(id)}threads`, { method: 'POST', body: { text: text.value, project: proj.value || undefined, provider: prov.value || undefined, model: model.value, effort: effort.value } });
       location.hash = `#/d/${encodeURIComponent(id)}/t/${t.id}`;
     } catch (err) { toast(err.message); send.disabled = false; }
   } },
-  h('div', { class: 'two' }, h('label', { class: 'field' }, h('span', {}, 'Project'), proj), h('label', { class: 'field' }, h('span', {}, 'Account'), prov)),
+  h('div', { class: 'two' }, h('label', { class: 'field' }, h('span', {}, 'Project'), proj), h('label', { class: 'field' }, h('span', {}, 'Account'), prov),
+    h('label', { class: 'field' }, h('span', {}, 'Model'), model), h('label', { class: 'field' }, h('span', {}, 'Effort'), effort)),
   text,
   h('div', { style: { display: 'flex', gap: '8px', 'justify-content': 'flex-end' } }, h('button', { class: 'btn quiet', type: 'button', onclick: onClose }, 'Cancel'), send));
   text.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) f.requestSubmit(); });
@@ -316,6 +328,7 @@ function thread(id, tid) {
     try { await api(`${dev(id)}threads/${tid}`, { method: 'DELETE' }); location.hash = `#/d/${encodeURIComponent(id)}`; } catch (e) { toast(e.message); }
   });
   const prov = providerSelect();
+  const [model, effort] = settingSelects(null, ['Model', 'Effort']); // the composer has no field labels
   const input = h('textarea', { rows: 1, placeholder: 'Follow up…', 'aria-label': 'Message' });
   const send = h('button', { class: 'btn send', type: 'submit', 'aria-label': 'Send' }, icon('send'));
   const form = h('form', { class: 'composer', onsubmit: async e => {
@@ -323,10 +336,10 @@ function thread(id, tid) {
     const text = input.value.trim();
     if (!text || t?.status === 'running') return;
     send.disabled = true;
-    try { await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined } }); input.value = ''; grow(); prov.value = ''; }
+    try { await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: model.value, effort: effort.value } }); input.value = ''; grow(); prov.value = ''; }
     catch (err) { toast(err.message); }
     send.disabled = false;
-  } }, h('div', { class: 'opts' }, prov), h('div', { class: 'in' }, input, send));
+  } }, h('div', { class: 'opts' }, prov, model, effort), h('div', { class: 'in' }, input, send));
   const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, innerHeight * 0.4)}px`; };
   input.addEventListener('input', grow);
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) form.requestSubmit(); });
@@ -355,6 +368,8 @@ function thread(id, tid) {
     // name whoever started the turn; each handoff seam names who took over after that
     const first = turn.items.find(i => i.kind === 'seam')?.from ?? turn.provider;
     if (first) el.append(h('div', { class: `who-line c-${first}` }, h('span', { class: 'dot' }), LABEL[first]));
+    const skills = [...new Set(turn.items.filter(i => i.kind === 'tool' && i.name === 'Skill' && i.detail).map(i => i.detail))];
+    if (skills.length) el.append(h('div', { class: 'skills', 'aria-label': 'Skills loaded' }, skills.map(s => h('span', { class: 'tag' }, s))));
     let steps = null;
     const closeSteps = () => { steps = null; };
     for (const it of turn.items) {
@@ -396,8 +411,10 @@ function thread(id, tid) {
     titleEl.textContent = t.title; midEl.textContent = t.title;
     where.textContent = `${t.project?.name ?? (t.auto ? 'Auto project' : 'hub')} · ${id}`;
     stick(() => turnsEl.replaceChildren(...t.turns.map(renderTurn)));
+    if (!settingsShown) { model.value = t.model ?? ''; effort.value = t.effort ?? ''; settingsShown = true; } // later snapshots mustn't undo an unsent pick
     paintBand();
   }
+  let settingsShown = false;
 
   const es = new EventSource(`/api/${dev(id)}threads/${tid}/events`);
   onCleanup(() => es.close());

@@ -58,6 +58,8 @@ test('parseClaude normalizes stream-json', () => {
   assert.deepEqual(ev({ type: 'system', subtype: 'init', session_id: 's1' }), [{ kind: 'session', id: 's1' }]);
   assert.deepEqual(ev({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls -la' } }] } }),
     [{ kind: 'text', text: 'hi' }, { kind: 'tool', name: 'Bash', detail: 'ls -la' }]);
+  assert.deepEqual(ev({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'impeccable' } }] } }),
+    [{ kind: 'tool', name: 'Skill', detail: 'impeccable' }], 'skill name feeds the skill labels in the app');
   assert.deepEqual(ev({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'h' } } }), [{ kind: 'delta', text: 'h' }]);
   assert.deepEqual(ev({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', resetsAt: 1800003600, unifiedWindows: { five_hour: { utilization: 0.91 } } } }),
     [{ kind: 'usage', status: 'allowed_warning', utilization: 0.91, resetsAt: 1800003600_000 }]);

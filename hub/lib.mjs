@@ -3,6 +3,9 @@
 
 export const PROVIDERS = ['personal', 'school', 'codex'];
 export const CLAUDE = new Set(['personal', 'school']);
+// Claude model ids for --model ('' = the account's settings.json default). Codex keeps its config.toml model.
+export const MODELS = ['claude-opus-5-5', 'claude-fable-5-2', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']; // same levels for claude --effort and codex model_reasoning_effort
 const NEAR = 0.9; // 5-hour window utilization where an account starts yielding to one with more room
 
 // accounts: { personal: { limitedUntil, utilization }, ... }  (ms epoch, 0..1)

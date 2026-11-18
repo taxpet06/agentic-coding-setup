@@ -144,7 +144,7 @@ function saveThread(t, now = false) {
 const summary = t => {
   const last = t.turns.at(-1);
   const lastText = [...t.turns].reverse().flatMap(x => (x.items ?? []).filter(i => i.kind === 'text')).at(0)?.text ?? '';
-  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, updatedAt: t.updatedAt,
+  return { id: t.id, title: t.title, project: t.project, auto: t.auto, status: t.status, provider: t.provider, model: t.model ?? null, effort: t.effort ?? null, updatedAt: t.updatedAt,
     createdAt: t.createdAt, lastStatus: last?.status ?? null, preview: lastText.slice(0, 160), turns: t.turns.length };
 };
 const asTranscript = turns => turns.map(t => t.role === 'user' ? { role: 'user', text: t.text }
@@ -191,10 +191,13 @@ function runProvider(p, t, turn, prompt, cwd, resumeId) {
     env = { ...process.env, CLAUDE_CONFIG_DIR: path.join(HOME, `.claude-${p}`) };
     args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', PERMISSION_MODE];
     if (resumeId) args.push('--resume', resumeId);
-    if (process.env.HUB_CLAUDE_MODEL) args.push('--model', process.env.HUB_CLAUDE_MODEL);
+    const model = t.model || process.env.HUB_CLAUDE_MODEL;
+    if (model) args.push('--model', model);
+    if (t.effort) args.push('--effort', t.effort);
   } else {
     cmd = 'codex';
     const cfg = ['-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true'];
+    if (t.effort) cfg.push('-c', `model_reasoning_effort="${t.effort}"`);
     if (cwd === HUB_DIR) cfg.push('-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(HOME)}]`);
     args = resumeId ? ['exec', 'resume', resumeId, '--json', '--skip-git-repo-check', ...cfg, '-'] : ['exec', '--json', '--skip-git-repo-check', ...cfg, '-'];
   }
@@ -274,7 +277,9 @@ async function runTurn(t, turn, force) {
     // (a resumed Claude session already holds its own partial work in the copied transcript)
     const carry = lib.contextFor(transcript, seen) + (partial && (family === 'codex' || !resumeId)
       ? `[The previous assistant was cut off by a usage limit partway through this request. Its progress:]\n${partial}\n\n` : '');
-    const hint = cwd === HUB_DIR && family === 'codex' ? '[You are in the hub repo. Projects on this machine: ~/.claude/hub/projects.tsv; `hub find <word>` looks one up.]\n\n' : '';
+    // Claude gets the stack-router nudge from its UserPromptSubmit hook; Codex has no Claude hooks, so it rides along here
+    const hint = family !== 'codex' ? '' : (cwd === HUB_DIR ? '[You are in the hub repo. Projects on this machine: ~/.claude/hub/projects.tsv; `hub find <word>` looks one up.]\n' : '')
+      + '[Before acting on a coding, UI, debugging or prose task, read ~/.claude/skills/stack-router/SKILL.md and follow its routing: each skill it names is at ~/.claude/skills/<name>/SKILL.md.]\n\n';
     let res = await runProvider(p, t, turn, hint + carry + userText, cwd, resumeId);
     if (res.noSession && resumeId) { // transcript file went missing: start a fresh session with the whole history
       t.sessions[family] = null;
@@ -291,6 +296,15 @@ async function runTurn(t, turn, force) {
     turn.status = res.ok ? 'done' : 'failed';
     if (!res.ok) addItem(t, turn, { kind: 'note', tone: 'error', text: res.text });
     return;
+  }
+}
+
+// model/effort stick to the thread until changed; '' means the default
+function setSettings(t, p) {
+  for (const [k, ok] of [['model', lib.MODELS], ['effort', lib.EFFORTS]]) {
+    if (p[k] === undefined) continue;
+    if (p[k] !== '' && !ok.includes(p[k])) throw new HttpError(400, `Unknown ${k} ${p[k]}`);
+    t[k] = p[k] || null;
   }
 }
 
@@ -421,7 +435,8 @@ async function local(req, res, parts) {
     }
     const t = { id: crypto.randomUUID(), title: (text ?? '').trim().replace(/\s+/g, ' ').slice(0, 80) || 'New thread', auto: !project,
       project: project ? { name: project.name, path: project.path } : null, createdAt: Date.now(), updatedAt: Date.now(),
-      status: 'idle', provider: null, sessions: { claude: null, codex: null }, turns: [] };
+      status: 'idle', provider: null, model: null, effort: null, sessions: { claude: null, codex: null }, turns: [] };
+    setSettings(t, p);
     threads.set(t.id, t);
     try { startTurn(t, text, p.provider || undefined); } catch (e) { threads.delete(t.id); throw e; }
     return json(res, 201, t);
@@ -435,7 +450,7 @@ async function local(req, res, parts) {
     await fsp.rename(path.join(THREADS, `${t.id}.json`), path.join(THREADS, 'archive', `${t.id}.json`)).catch(() => {});
     return json(res, 200, { ok: true });
   }
-  if (t && c === 'messages' && m === 'POST') { const p = await body(req); startTurn(t, str(p.text), p.provider || undefined); return json(res, 202, summary(t)); }
+  if (t && c === 'messages' && m === 'POST') { const p = await body(req); if (running.has(t.id)) throw new HttpError(409, 'This thread is still working. Stop it first, or wait.'); setSettings(t, p); startTurn(t, str(p.text), p.provider || undefined); return json(res, 202, summary(t)); }
   if (t && c === 'stop' && m === 'POST') {
     const job = running.get(t.id);
     if (job) { job.stopped = true; if (job.child) killTree(job.child); }

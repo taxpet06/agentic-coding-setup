@@ -153,6 +153,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"[stack-router] If this is a coding, UI, debugging, testing, architecture or prose task and stack-router is not loaded in this session yet, load it with the Skill tool before acting and follow its routing table.\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
