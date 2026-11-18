@@ -1,23 +1,44 @@
 #!/usr/bin/env bash
 # Idempotent: install this repo's Claude/Codex setup into $HOME and update everything.
-# Safe to re-run after every `git pull`.
+# Safe to re-run after every `git pull`. Linux, macOS, and Windows (run it in Git Bash, which Claude Code needs anyway).
 set -uo pipefail
 R="$(cd "$(dirname "$0")" && pwd)"
 step() { printf '\n==> %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) WIN=1 ;; *) WIN= ;; esac
+ps() { powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$*"; }
 export PATH="$HOME/.local/bin:$HOME/.n/bin:$HOME/.local/node/bin:$PATH"
+[ -n "$WIN" ] && export PATH="$PATH:$APPDATA/npm:/c/Program Files/nodejs:/c/Program Files/Tailscale"
+mkdir -p ~/.local/bin
+# a command in ~/.local/bin that runs a Node script from this repo: bash launcher, plus a .cmd one on Windows
+launcher() {   # $1 = name, $2 = script (relative to the repo), $3 = optional fixed first argument
+  local n=$1 js=$2 a=${3:-}
+  printf '#!/usr/bin/env bash\nexec node "%s/%s" %s"$@"\n' "$R" "$js" "${a:+$a }" > ~/.local/bin/$n && chmod +x ~/.local/bin/$n
+  [ -n "$WIN" ] && printf '@node "%s\\%s" %s%%*\r\n' "$(cygpath -w "$R")" "${js//\//\\}" "${a:+$a }" > ~/.local/bin/$n.cmd
+  return 0
+}
 
 step "prerequisites"
-if ! have node; then   # user-space install, no sudo needed
-  v=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep -o 'node-v[0-9.]*-linux-x64.tar.xz' | head -1)
-  mkdir -p ~/.local/node && curl -fsSL "https://nodejs.org/dist/latest-v22.x/$v" | tar -xJ -C ~/.local/node --strip-components=1
-  for b in node npm npx; do ln -sfn ~/.local/node/bin/$b ~/.local/bin/$b; done
+if ! have node; then
+  if [ -n "$WIN" ]; then winget install -e --id OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
+  else   # user-space install, no sudo needed
+    arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/'); os=$(uname -s | tr A-Z a-z)
+    v=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep -o "node-v[0-9.]*-$os-$arch.tar.xz" | head -1)
+    mkdir -p ~/.local/node && curl -fsSL "https://nodejs.org/dist/latest-v22.x/$v" | tar -xJ -C ~/.local/node --strip-components=1
+    for b in node npm npx; do ln -sfn ~/.local/node/bin/$b ~/.local/bin/$b; done
+  fi
 fi
+have node || { echo "MISSING node: install Node.js 22+ and re-run"; exit 1; }
 have git  || echo "MISSING git"
-have claude || { curl -fsSL https://claude.ai/install.sh | bash; }
-have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+if [ -n "$WIN" ]; then
+  have claude || ps "irm https://claude.ai/install.ps1 | iex"
+  have uv || ps "irm https://astral.sh/uv/install.ps1 | iex"
+else
+  have claude || { curl -fsSL https://claude.ai/install.sh | bash; }
+  have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
 have npm && { have codex || npm i -g @openai/codex; npm i -g defuddle vercel; }
-for b in codex defuddle vercel; do [ -x "$(npm prefix -g 2>/dev/null)/bin/$b" ] && ln -sfn "$(npm prefix -g)/bin/$b" ~/.local/bin/$b; done
+[ -z "$WIN" ] && for b in codex defuddle vercel; do [ -x "$(npm prefix -g 2>/dev/null)/bin/$b" ] && ln -sfn "$(npm prefix -g)/bin/$b" ~/.local/bin/$b; done   # (Windows: npm's global dir is already on PATH)
 have uv && uv tool install 'graphifyy[pdf]' >/dev/null 2>&1 || true   # [pdf] = pypdf, needed to extract PDF text
 
 step "claude shared config -> ~/.claude (existing files backed up once)"
@@ -31,14 +52,18 @@ sed -i "s#/home/petros/#$HOME/#g; s#/usr/bin/node#$(command -v node)#g" ~/.claud
 mkdir -p ~/.claude/hooks
 cp -a "$R/claude/skills/." ~/.claude/skills/
 cp -a "$R/agents-skills/." ~/.agents/skills/
-install -m755 "$R/claude/bin/claude-profile" ~/.local/bin/claude-profile
-for p in personal school; do ln -sfn claude-profile ~/.local/bin/claude-$p; done
+rm -f ~/.local/bin/claude-profile   # the old bash wrapper
+for p in personal school; do rm -f ~/.local/bin/claude-$p; launcher claude-$p hub/claude-profile.mjs $p; done
 
 step "cloned skill packs: clone/pull, link each skills/<name> into ~/.agents/skills (Codex) and ~/.claude/skills (Claude)"
 skill_pack() {   # $1 = github owner/repo, $2 = dir under ~/.agents
   local A=~/.agents/$2
   [ -d $A/.git ] && git -C $A pull -q || git clone -q --depth 1 https://github.com/$1.git $A
-  for d in $A/skills/*/; do n=$(basename "$d"); ln -sfn "${d%/}" ~/.agents/skills/$n; ln -sfn ../../.agents/skills/$n ~/.claude/skills/$n; done
+  for d in $A/skills/*/; do n=$(basename "$d")
+    if [ -n "$WIN" ]; then   # Git Bash can't make real symlinks without Developer Mode: fresh copies each run
+      for t in ~/.agents/skills/$n ~/.claude/skills/$n; do rm -rf "$t"; cp -r "${d%/}" "$t"; done
+    else ln -sfn "${d%/}" ~/.agents/skills/$n; ln -sfn ../../.agents/skills/$n ~/.claude/skills/$n; fi
+  done
 }
 skill_pack artemnovitckii/claude-animation-skills claude-animation-skills   # /graph, /map-route, /stick-figure ...
 skill_pack Jeffallan/claude-skills fullstack-dev-skills                      # 67 language/framework experts
@@ -70,25 +95,31 @@ grep -q '^model = ' ~/.codex/config.toml || sed -i '1i model = "gpt-5.6-luna"\nm
 sed -i 's#/home/petros/#'"$HOME"'/#g' ~/.codex/hooks.json
 
 step "project hub (see HUB.md): index repos, let hub sessions work anywhere under \$HOME"
-install -m755 "$R/bin/hub" ~/.local/bin/
+rm -f ~/.local/bin/hub; launcher hub hub/cli.mjs
 have npm && (cd "$R/hub" && npm ci --omit=dev --no-fund --no-audit 2>&1 | tail -1)   # Hub app agent deps (web-push)
-systemctl --user is-active -q hub-agent 2>/dev/null && ~/.local/bin/hub app >/dev/null   # restart it on the pulled code
-have jq || echo "  MISSING jq (hub hooks need it): sudo apt install jq"
-have tmux || echo "  MISSING tmux (hub serve needs it): sudo apt install tmux"
+# restart a running agent on the pulled code
+{ systemctl --user is-active -q hub-agent 2>/dev/null || [ -f ~/.claude/hub/agent.pid ]; } && ~/.local/bin/hub app >/dev/null
+[ -z "$WIN" ] && ! have tmux && echo "  optional: tmux makes 'hub serve' attachable (sudo apt install tmux)"
 # gitignored, machine-specific: phone sessions started in this repo may touch any repo in \$HOME
-mkdir -p "$R/.claude"; [ -f "$R/.claude/settings.local.json" ] || printf '{"permissions":{"additionalDirectories":["%s"]}}\n' "$HOME" > "$R/.claude/settings.local.json"
+H=$HOME; [ -n "$WIN" ] && H=$(cygpath -m "$HOME")
+mkdir -p "$R/.claude"; [ -f "$R/.claude/settings.local.json" ] || printf '{"permissions":{"additionalDirectories":["%s"]}}\n' "$H" > "$R/.claude/settings.local.json"
 ~/.local/bin/hub scan
 
 step "tailscale (install or update; needs sudo)"
+if [ -n "$WIN" ]; then
+  have tailscale || winget install -e --id Tailscale.Tailscale --silent --accept-package-agreements --accept-source-agreements
+  echo "  Windows: sign in from the Tailscale tray icon, then run: hub app   (and hub serve for Remote Control)"
+else
 install -m755 "$R/bin/tailscale_install" "$R/bin/tailscale_up" ~/.local/bin/
 if [ -t 0 ] || sudo -n true 2>/dev/null; then
   ~/.local/bin/tailscale_install || echo "  TAILSCALE INSTALL FAILED (see above)"
 else
   echo "  no terminal for sudo: skipped. tailscale_up installs it on first run."
 fi
+fi
 
 step "manual logins still needed (tokens are never in this repo)"
 for c in "gh auth status" "claude auth status" "codex login status"; do $c >/dev/null 2>&1 || echo "  run: ${c%% status}"; done
-tailscale status >/dev/null 2>&1 || echo "  run: tailscale_up   (joins the tailnet with SSH enabled)"
+tailscale status >/dev/null 2>&1 || { [ -n "$WIN" ] && echo "  sign in to Tailscale (tray icon)" || echo "  run: tailscale_up   (joins the tailnet with SSH enabled)"; }
 echo "  claude-personal / claude-school: log in once each (/login)"
 echo "  claude.ai connectors (Gmail, Drive, Notion, Higgsfield...) follow your claude.ai account automatically"

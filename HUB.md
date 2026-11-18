@@ -10,13 +10,13 @@ Two ways in from your iPhone, both built on the same index, graphs and git sync:
 | When | Do |
 |---|---|
 | Once per tailnet | Tailscale admin → [DNS](https://login.tailscale.com/admin/dns) → **HTTPS Certificates → Enable**. iOS only installs web apps and delivers their notifications over HTTPS |
-| Once per machine | `./bootstrap.sh` (installs `hub` and its hooks, the `$HOME` permission, the first index, and the app's deps). `sudo apt install jq tmux` if it says so. Log in once each: `claude-personal`, `claude-school`, `codex login` |
-| Each time | `tailscale_up` → `hub app` (systemd service `hub-agent` + `tailscale serve`), `hub serve` (Remote Control), background graph refresh |
+| Once per machine | `./bootstrap.sh` (installs `hub` and its hooks, the `$HOME` permission, the first index, and the app's deps). On Windows run it in Git Bash (Claude Code needs Git for Windows anyway); it installs Node, Claude Code, uv and Tailscale with winget/PowerShell and writes `.cmd` launchers too. `tmux` is optional on Linux. Log in once each: `claude-personal`, `claude-school`, `codex login` |
+| Each time | Linux: `tailscale_up` → `hub app` (systemd user service `hub-agent` + `tailscale serve`), `hub serve` (Remote Control), background graph refresh. Windows: sign in to Tailscale from the tray, then `hub app` (logon task `HubAgent`, hidden) and `hub serve` |
 | Once per phone | Open the `https://<machine>.<tailnet>.ts.net/` link `hub app` prints, in Safari → Share → **Add to Home Screen**. Open Hub from the Home Screen → **Notifications → Turn on** |
 | On the phone | Hub → a machine → **+** → "do X for battlefield" (project and account default to Auto). Follow-ups go in the same thread |
 | Sync problems on your phone too (optional) | ntfy iOS app, subscribe to a long random topic, `export HUB_NTFY_TOPIC=<topic>` in `~/.bashrc` |
 
-Commands: `hub app [stop|logs]`, `hub scan [--graph]`, `hub find <word>`, `hub pull`, `hub push <repo>...`, `hub serve`, `hub selftest`. State lives in `~/.claude/hub/`: `projects.tsv` (index), `threads/`, `accounts.json` (limits and usage), `push.json` (VAPID keys and phone subscriptions, mode 600), `failed` (sync problems shown to the next session).
+Commands (Linux, macOS and Windows; `hub` is `hub/cli.mjs`): `hub app [stop|logs]`, `hub scan [--graph]`, `hub find <word>`, `hub pull`, `hub push <repo>...`, `hub serve`, `hub selftest`. State lives in `~/.claude/hub/`: `projects.tsv` (index), `threads/`, `accounts.json` (limits and usage), `push.json` (VAPID keys and phone subscriptions, mode 600), `failed` (sync problems shown to the next session).
 
 ## How the Hub app works
 

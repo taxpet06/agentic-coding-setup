@@ -108,3 +108,14 @@ test('modes map to a Codex sandbox; a rewound session gets its own recap intro',
   assert.ok(ctx.startsWith(`[${REWOUND}]`) && ctx.includes('User: hi'));
   assert.ok(contextFor([{ role: 'user', text: 'hi' }], 0).startsWith('[Hub handoff'), 'account switches keep the handoff wording');
 });
+
+test('Windows: npm .cmd shims resolve to the JS file they run (so no shell mangles our args)', async () => {
+  const { parseShim } = await import('./platform.mjs');
+  const path = await import('node:path');
+  const dir = path.join('C:', 'Users', 'p', 'AppData', 'Roaming', 'npm');
+  const modern = '@ECHO off\r\nSETLOCAL\r\nSET dp0=%~dp0\r\n"%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n';
+  const legacy = '@IF EXIST "%~dp0\\node.exe" (\r\n  "%~dp0\\node.exe"  "%~dp0\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\r\n)';
+  assert.equal(parseShim(modern, dir), path.join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js').replace(/\//g, path.sep));
+  assert.ok(parseShim(legacy, dir).endsWith('cli.js'));
+  assert.equal(parseShim('@echo off\r\nsomething.exe %*', dir), null, 'not an npm shim: fall back to a shell');
+});

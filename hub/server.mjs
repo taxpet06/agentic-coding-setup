@@ -12,6 +12,8 @@ import { promisify } from 'node:util';
 import crypto from 'node:crypto';
 import webpush from 'web-push';
 import * as lib from './lib.mjs';
+import { WIN, command, widenPath, childOpts, killTree, alive } from './platform.mjs';
+import { prepareProfile } from './claude-profile.mjs';
 
 const run = promisify(execFile);
 const HOME = os.homedir();
@@ -26,15 +28,22 @@ const VERSION = 1;
 const UPLOADS = path.join(STATE, 'uploads');
 const APPROVAL_TOKEN = crypto.randomBytes(24).toString('hex'); // lets approve.mjs, spawned by our own Claude turns, reach /api/approvals
 const IMG = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
-// systemd starts us with a bare PATH; add the user's tool dirs after whatever PATH says
-for (const d of ['.local/bin', '.n/bin', '.local/node/bin']) if (!process.env.PATH.split(':').includes(path.join(HOME, d))) process.env.PATH += `:${path.join(HOME, d)}`;
+const HUB_CLI = path.join(import.meta.dirname, 'cli.mjs');
+widenPath(); // systemd and Windows logon tasks start us with a bare PATH
 fs.mkdirSync(path.join(THREADS, 'archive'), { recursive: true });
+// our own log and pid, so `hub app logs` and `hub app stop` work without systemd (Windows, macOS, WSL)
+const LOGF = path.join(STATE, 'agent.log');
+try { if (fs.statSync(LOGF).size > 5_000_000) fs.renameSync(LOGF, `${LOGF}.1`); } catch {}
+fs.writeFileSync(path.join(STATE, 'agent.pid'), String(process.pid));
 
 // ---------- small helpers ----------
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
 const writeJSON = (f, v, mode = 0o644) => { const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(v, null, 1), { mode }); fs.renameSync(t, f); };
-const which = b => process.env.PATH.split(':').map(d => path.join(d, b)).find(f => { try { fs.accessSync(f, fs.constants.X_OK); return true; } catch { return false; } }) ?? null;
-const log = (...a) => console.log(new Date().toISOString(), ...a);
+const log = (...a) => {
+  const line = [new Date().toISOString(), ...a.map(x => (x instanceof Error ? x.stack : typeof x === 'string' ? x : JSON.stringify(x)))].join(' ');
+  console.log(line);
+  fs.appendFile(LOGF, line + '\n', () => {});
+};
 class HttpError extends Error { constructor(code, msg) { super(msg); this.code = code; } }
 
 function getJSON(url, timeout = 2500, { method = 'GET', body } = {}) {
@@ -95,18 +104,18 @@ function effectiveAccounts(now = Date.now()) {
 }
 const ready = () => lib.PROVIDERS.filter(p => providerState[p]?.installed && providerState[p]?.loggedIn);
 async function checkProviders() {
-  const claude = which('claude');
+  const claude = command('claude');
   for (const p of ['personal', 'school']) {
     const dir = path.join(HOME, `.claude-${p}`);
     let installed = !!claude && fs.existsSync(dir), loggedIn = false;
     if (installed) {
-      try { loggedIn = !!JSON.parse((await run(claude, ['auth', 'status'], { env: { ...process.env, CLAUDE_CONFIG_DIR: dir }, timeout: 20_000 })).stdout).loggedIn; } catch {}
+      try { loggedIn = !!JSON.parse((await run(claude.cmd, [...claude.pre, 'auth', 'status'], { env: { ...process.env, CLAUDE_CONFIG_DIR: dir }, shell: claude.shell, windowsHide: true, timeout: 20_000 })).stdout).loggedIn; } catch {}
     }
     providerState[p] = { installed, loggedIn };
   }
-  const codex = which('codex');
+  const codex = command('codex');
   let loggedIn = false;
-  if (codex) { try { await run(codex, ['login', 'status'], { timeout: 20_000 }); loggedIn = true; } catch {} }
+  if (codex) { try { await run(codex.cmd, [...codex.pre, 'login', 'status'], { shell: codex.shell, windowsHide: true, timeout: 20_000 }); loggedIn = true; } catch {} }
   providerState.codex = { installed: !!codex, loggedIn };
 }
 function noteUsage(p, ev) {
@@ -169,7 +178,7 @@ function projects() {
     });
   } catch { return []; }
 }
-const hubBin = () => which('hub') ?? path.join(HUB_DIR, 'bin/hub');
+
 
 // ---------- running a turn ----------
 const running = new Map(); // threadId -> { child, stopped }
@@ -189,11 +198,14 @@ function claudeResume(t, profile, cwd) {
 
 function runProvider(p, t, turn, prompt, cwd, resumeId, images = []) {
   const isClaude = lib.CLAUDE.has(p);
-  let cmd, args, env = process.env;
+  let cmd, args, env = process.env, shell = false;
   if (isClaude) {
-    cmd = which(`claude-${p}`) ?? 'claude';
-    env = { ...process.env, CLAUDE_CONFIG_DIR: path.join(HOME, `.claude-${p}`) };
-    args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', t.mode || PERMISSION_MODE];
+    // what claude-personal / claude-school do: link the shared config into the profile, then run claude in it
+    const c = command('claude');
+    if (!c) return Promise.resolve({ ok: false, limited: false, text: 'claude is not installed on this machine.' });
+    cmd = c.cmd; shell = c.shell;
+    env = { ...process.env, CLAUDE_CONFIG_DIR: prepareProfile(p) };
+    args = [...c.pre, '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', t.mode || PERMISSION_MODE];
     if (resumeId) args.push('--resume', resumeId);
     const model = t.model || process.env.HUB_CLAUDE_MODEL;
     if (model) args.push('--model', model);
@@ -204,15 +216,17 @@ function runProvider(p, t, turn, prompt, cwd, resumeId, images = []) {
     args.push('--permission-prompt-tool', 'mcp__hub__approve', '--mcp-config', JSON.stringify({ mcpServers: { hub } }));
     env.MCP_TOOL_TIMEOUT = '3600000'; // a prompt may wait an hour for an answer
   } else {
-    cmd = 'codex';
+    const c = command('codex');
+    if (!c) return Promise.resolve({ ok: false, limited: false, text: 'codex is not installed on this machine.' });
+    cmd = c.cmd; shell = c.shell;
     const cfg = ['-c', `sandbox_mode="${lib.codexSandbox(t.mode || PERMISSION_MODE)}"`, '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true'];
     if (t.effort) cfg.push('-c', `model_reasoning_effort="${t.effort}"`);
     if (cwd === HUB_DIR) cfg.push('-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(HOME)}]`);
     const img = images.flatMap(f => ['--image', f]); // before --json: --image takes several values
-    args = resumeId ? ['exec', 'resume', resumeId, ...img, '--json', '--skip-git-repo-check', ...cfg, '-'] : ['exec', ...img, '--json', '--skip-git-repo-check', ...cfg, '-'];
+    args = [...c.pre, ...(resumeId ? ['exec', 'resume', resumeId, ...img, '--json', '--skip-git-repo-check', ...cfg, '-'] : ['exec', ...img, '--json', '--skip-git-repo-check', ...cfg, '-'])];
   }
   return new Promise(resolve => {
-    const child = spawn(cmd, args, { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd, env, shell, ...childOpts, stdio: ['pipe', 'pipe', 'pipe'] });
     const job = running.get(t.id); if (job) job.child = child;
     child.stdin.on('error', () => {}); child.stdin.end(prompt);
     let final = null, limited = false, errText = '', stderr = '', sessionId = null;
@@ -248,10 +262,6 @@ function runProvider(p, t, turn, prompt, cwd, resumeId, images = []) {
         noSession: !ok && /no conversation found|session not found/i.test(`${text}\n${stderr}`) });
     });
   });
-}
-function killTree(child) {
-  try { process.kill(-child.pid, 'SIGTERM'); } catch {}
-  setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 5000).unref();
 }
 
 function seamReason(prev, next, prevLimited, forced) {
@@ -402,7 +412,7 @@ function startTurn(t, text, force, images = []) {
       if (card) addItem(t, turn, card);
       setTurn(t, turn); saveThread(t, true);
       // commit + push the repo (own repos only), then say on the card whether it made it
-      const pushed = new Promise(r => { const c = spawn(hubBin(), ['push', where], { detached: true, stdio: 'ignore' }); c.on('close', r); c.on('error', r); c.unref(); });
+      const pushed = new Promise(r => { const c = spawn(process.execPath, [HUB_CLI, 'push', where], { detached: true, windowsHide: true, stdio: 'ignore' }); c.on('close', r); c.on('error', r); c.unref(); });
       if (card) pushed.then(() => pushState(where)).then(st => { Object.assign(card, st); patchItem(t, turn, card); }).catch(() => {});
       const last = turn.items.filter(i => i.kind === 'text' || i.kind === 'note').at(-1)?.text ?? '';
       const proj = (t.project?.name ?? 'hub').split('/').pop();
@@ -498,7 +508,11 @@ async function notify(payload) {
 
 // ---------- devices on the tailnet ----------
 let devCache = { t: 0, list: null };
-async function remoteControl() { try { await run('tmux', ['has-session', '-t', 'hub'], { timeout: 2000 }); return true; } catch { return false; } }
+async function remoteControl() { // `hub serve`: a tmux session on Linux/macOS, a background process (serve.pid) otherwise
+  if (alive(Number(readJSON(path.join(STATE, 'serve.pid'), 0)))) return true;
+  if (WIN) return false;
+  try { await run('tmux', ['has-session', '-t', 'hub'], { timeout: 2000 }); return true; } catch { return false; }
+}
 async function info() {
   return { id: me.id, dns: me.dns, os: me.os, version: VERSION, hubDir: HUB_DIR, accounts: effectiveAccounts(), ready: ready(),
     next: lib.pickProvider(effectiveAccounts(), Date.now(), { installed: ready() }),
@@ -539,7 +553,7 @@ async function local(req, res, parts) {
   const [a, b, c] = parts, m = req.method;
   if (a === 'info' && m === 'GET') return json(res, 200, await info());
   if (a === 'projects' && m === 'GET') return json(res, 200, projects());
-  if (a === 'scan' && m === 'POST') { await run(hubBin(), ['scan'], { timeout: 60_000 }).catch(() => {}); return json(res, 200, projects()); }
+  if (a === 'scan' && m === 'POST') { await run(process.execPath, [HUB_CLI, 'scan'], { timeout: 120_000 }).catch(() => {}); return json(res, 200, projects()); }
   if (a === 'accounts' && b && c === 'reset' && m === 'POST') {
     if (!lib.PROVIDERS.includes(b)) throw new HttpError(404, 'No such account');
     delete accounts[b]?.limitedUntil; if (accounts[b]) accounts[b].status = 'allowed'; saveAccounts();

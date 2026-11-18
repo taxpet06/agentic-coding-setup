@@ -3,7 +3,6 @@
 set -euo pipefail
 R="$(cd "$(dirname "$0")" && pwd)"
 cp ~/.claude/CLAUDE.md ~/.claude/settings.json "$R/claude/"
-cp ~/.local/bin/claude-profile "$R/claude/bin/"
 sync_dir() { rsync -a --delete --exclude='gsd-*' --exclude=synced "$1/" "$2/"; }   # gsd-* come from the installer
 sync_dir ~/.claude/skills "$R/claude/skills"
 sync_dir ~/.agents/skills "$R/agents-skills"
