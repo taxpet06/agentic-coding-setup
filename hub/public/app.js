@@ -226,7 +226,8 @@ async function device(id, params) {
           icon('plus', 'chev'))) : [h('div', { class: 'empty' }, h('p', {}, `No project matches “${q.value}”.`))]));
       };
       q.addEventListener('input', fill); fill();
-      content.replaceChildren(h('div', { style: { 'margin-bottom': '10px' } }, q), rows,
+      content.replaceChildren(h('a', { class: 'btn wide', href: `#/d/${encodeURIComponent(id)}/new-project`, style: { 'margin-bottom': '12px', 'text-decoration': 'none' } }, icon('folder', 'sm'), 'Start a project from a folder'),
+        h('div', { style: { 'margin-bottom': '10px' } }, q), rows,
         h('button', { class: 'btn quiet wide', style: { 'margin-top': '14px' }, onclick: async e => {
           e.target.disabled = true; try { projects = await api(`${dev(id)}scan`, { method: 'POST' }); toast(`${projects.length} projects`); paint(); } catch (err) { toast(err.message); } e.target.disabled = false;
         } }, icon('refresh', 'sm'), 'Rescan this machine'));
@@ -303,8 +304,10 @@ function settingsLine(prov, set) {
 }
 const field = (label, el, cls = '') => h('label', { class: `field ${cls}` }, h('span', {}, label), el);
 function newThreadForm(id, projects, project, onClose) {
-  const proj = h('select', { 'aria-label': 'Project' }, h('option', { value: '' }, 'Auto: from your message'),
-    projects.map(p => h('option', { value: p.name, selected: p.name === project }, p.name.includes('/') ? `${short(p.name)} · ${p.name.slice(0, p.name.lastIndexOf('/'))}` : p.name)));
+  const proj = h('select', { 'aria-label': 'Project', onchange: () => { if (proj.value === '\u0000new') location.hash = `#/d/${encodeURIComponent(id)}/new-project`; } },
+    h('option', { value: '' }, 'Auto: from your message'),
+    projects.map(p => h('option', { value: p.name, selected: p.name === project }, p.name.includes('/') ? `${short(p.name)} · ${p.name.slice(0, p.name.lastIndexOf('/'))}` : p.name)),
+    h('option', { value: '\u0000new' }, 'New project from a folder…'));
   const prov = providerSelect();
   const set = settingSelects();
   const text = h('textarea', { placeholder: project ? `What should happen in ${short(project)}?` : 'e.g. fix the camera jitter in battlefield', rows: 4, 'aria-label': 'Message' });
@@ -346,26 +349,31 @@ async function shrink(file) {
 }
 function attacher(onChange = () => {}) {
   const files = [];
+  // images are downscaled on the phone; anything else (PDF, CSV, code, zip...) goes as-is, up to 20 MB each
   async function add(list) {
     for (const f of list) {
-      if (!f.type.startsWith('image/')) continue;
-      if (files.length >= 6) { toast('Up to six images'); break; }
-      try { files.push(await shrink(f)); } catch { toast(`Couldn’t read ${f.name || 'that image'}`); }
+      if (files.length >= 10) { toast('Up to ten attachments'); break; }
+      if (f.size > 20_000_000) { toast(`${f.name} is over 20 MB`); continue; }
+      const img = /^image\/(jpeg|png|webp|gif|heic|heif)$/.test(f.type);
+      try { files.push(img ? { ...(await shrink(f)), name: f.name } : await raw(f)); }
+      catch { if (img) try { files.push(await raw(f)); } catch { toast(`Couldn’t read ${f.name || 'that file'}`); } else toast(`Couldn’t read ${f.name || 'that file'}`); }
     }
     paint();
   }
-  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async () => { await add([...input.files]); input.value = ''; } });
+  const raw = f => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok({ type: f.type || 'application/octet-stream', name: f.name, size: f.size, data: String(fr.result).split(',')[1] }); fr.onerror = no; fr.readAsDataURL(f); });
+  const input = h('input', { type: 'file', multiple: true, hidden: true, onchange: async () => { await add([...input.files]); input.value = ''; } });
   const strip = h('div', { class: 'thumbs', hidden: true });
   function paint() {
     strip.hidden = !files.length;
-    strip.replaceChildren(...files.map((f, i) => h('div', { class: 'thumb' }, h('img', { src: f.url, alt: `Attachment ${i + 1}` }),
+    strip.replaceChildren(...files.map((f, i) => h('div', { class: `thumb${f.url ? '' : ' file'}` }, f.url ? h('img', { src: f.url, alt: `Attachment ${i + 1}` })
+        : h('div', { class: 'fchip', title: f.name }, icon('file', 'sm'), h('span', {}, f.name), h('small', { class: 'num' }, size(f.size))),
       h('button', { type: 'button', class: 'rm', 'aria-label': `Remove attachment ${i + 1}`, onclick: () => { URL.revokeObjectURL(f.url); files.splice(i, 1); paint(); } }, icon('x', 'xs')))));
     onChange();
   }
   // paste a screenshot into the text box, or drop image files anywhere on the form
   function bind(field, zone) {
     field.addEventListener('paste', e => {
-      const imgs = [...(e.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'));
+      const imgs = [...(e.clipboardData?.files ?? [])];
       if (!imgs.length) return;
       if (!e.clipboardData.getData('text/plain')) e.preventDefault(); // a bare image: don't also paste its file name
       add(imgs);
@@ -376,7 +384,7 @@ function attacher(onChange = () => {}) {
     zone.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefault(); zone.classList.remove('dropping'); add([...e.dataTransfer.files]); });
   }
   return { input, strip, bind, open: () => input.click(), count: () => files.length,
-    take: () => files.map(f => ({ type: f.type, data: f.data })), clear: () => { files.forEach(f => URL.revokeObjectURL(f.url)); files.length = 0; paint(); } };
+    take: () => files.map(f => ({ type: f.type, name: f.name, data: f.data })), clear: () => { files.forEach(f => URL.revokeObjectURL(f.url)); files.length = 0; paint(); } };
 }
 
 // ---------- tool calls ----------
@@ -623,6 +631,9 @@ function thread(id, tid) {
     const wrap = h('div', { class: 'msg-user-wrap', 'data-id': turn.id, 'data-k': turn.id });
     if (turn.images?.length) wrap.append(h('div', { class: 'imgs' }, turn.images.map((n, i) =>
       h('a', { href: imgUrl(n), target: '_blank', rel: 'noopener', 'aria-label': `Attached image ${i + 1}` }, h('img', { src: imgUrl(n), alt: '', loading: 'lazy' })))));
+    if (turn.files?.length) wrap.append(h('div', { class: 'files' }, turn.files.map(f =>
+      h('a', { class: 'fchip', href: `/api/${dev(id)}threads/${tid}/files/${f.id}/${encodeURIComponent(f.name)}`, download: f.name, title: `Download ${f.name}` },
+        icon('file', 'sm'), h('span', {}, f.name), h('small', { class: 'num' }, size(f.size))))));
     const lastUser = t.turns.findLast(x => x.role === 'user') === turn;
     // the newest message shows its actions; tap an older one to reveal them
     wrap.append(h('div', { class: 'msg-user', role: 'button', tabindex: 0, 'aria-expanded': String(lastUser), onclick: () => { if (!lastUser) { wrap.classList.toggle('show'); } } }, turn.text),
@@ -717,6 +728,76 @@ function thread(id, tid) {
   every(1000, () => t?.status === 'running' && paintBand());
 }
 
+const size = b => b == null ? '' : b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+
+// ---------- new project: browse the machine's disk, pick or make a folder, set it up ----------
+function newProject(id, params) {
+  const key = `hub.browse.${id}`;
+  let cur = params.get('path') || (() => { try { return localStorage.getItem(key); } catch { return null; } })() || '', listing = null, hidden = false, busy = false;
+  const crumbs = h('nav', { class: 'crumbs', 'aria-label': 'Folder path' });
+  const list = h('div', {}, h('div', { class: 'skel' }), h('div', { class: 'skel' }));
+  const sub = h('p', { class: 'subtitle' }, `On ${id}. Use a folder as it is, or make a new one inside it.`);
+  const mkRow = h('form', { class: 'mkdir', hidden: true, onsubmit: async e => {
+    e.preventDefault();
+    const name = mkName.value.trim(); if (!name) return mkName.focus();
+    try { const r = await api(`${dev(id)}fs/mkdir`, { method: 'POST', body: { path: listing.path, name } }); mkRow.hidden = true; mkName.value = ''; go(r.path); }
+    catch (err) { toast(err.message); }
+  } });
+  const mkName = h('input', { type: 'text', placeholder: 'New folder name', 'aria-label': 'New folder name', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+  mkRow.append(icon('folder', 'sm'), mkName, h('button', { class: 'btn sm', type: 'submit' }, 'Create'), h('button', { class: 'qb', type: 'button', 'aria-label': 'Cancel', onclick: () => { mkRow.hidden = true; } }, icon('x', 'sm')));
+  const tools = h('div', { class: 'fs-tools' },
+    h('button', { class: 'btn quiet sm', type: 'button', onclick: () => go(listing?.home ?? '') }, 'Home'),
+    h('button', { class: 'btn quiet sm', type: 'button', onclick: () => { mkRow.hidden = false; mkName.focus(); } }, icon('plus', 'sm'), 'New folder'),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: e => { hidden = e.target.checked; go(cur); } }), 'Hidden folders'));
+  // the action bar at the bottom: what happens to the folder you're in
+  const where = h('div', { class: 'here' });
+  const github = h('input', { type: 'checkbox', checked: true });
+  const ghRow = h('label', { class: 'check' }, github, 'Private GitHub repo');
+  const start = h('button', { class: 'btn', type: 'button', onclick: () => setup() }, 'Start project here');
+  const bar2 = h('div', { class: 'composer fs-bar' }, h('div', { class: 'wrap' }, where, h('div', { class: 'fs-actions' }, ghRow, start)));
+  mount(h('main', { class: 'screen has-composer' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}?tab=projects`, label: id }, mid: 'New project' }),
+    h('h1', { class: 'title' }, 'Pick a folder'), sub, crumbs, tools, mkRow, list), bar2);
+  const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${bar2.offsetHeight}px`));
+  ro.observe(bar2); onCleanup(() => ro.disconnect());
+
+  async function go(p) {
+    try {
+      listing = await api(`${dev(id)}fs?path=${encodeURIComponent(p)}${hidden ? '&hidden=1' : ''}`);
+      cur = listing.path; try { localStorage.setItem(key, cur); } catch {}
+      paint();
+    } catch (e) { toast(e.message); if (!listing) list.replaceChildren(h('div', { class: 'error' }, e.message)); }
+  }
+  function paint() {
+    // (replaceChildren takes nodes, not arrays or nulls: flatten and drop the gaps)
+    crumbs.replaceChildren(...listing.crumbs.flatMap((c, i) => [i ? h('span', { class: 'sep', 'aria-hidden': 'true' }, '/') : null,
+      i === listing.crumbs.length - 1 ? h('span', { class: 'cur', 'aria-current': 'location' }, c.name) : h('button', { type: 'button', onclick: () => go(c.path) }, c.name)]).filter(Boolean));
+    requestAnimationFrame(() => { crumbs.scrollLeft = crumbs.scrollWidth; });
+    const rows = listing.entries.map(e => h('button', { class: 'row', type: 'button', onclick: () => go(e.path) },
+      icon(e.project ? 'graph' : 'folder', 'sm'), h('div', { class: 'body' }, h('div', { class: 'name' }, e.name)),
+      e.project ? h('span', { class: 'tag' }, 'project') : e.git ? h('span', { class: 'tag' }, 'git') : null, icon('chev', 'chev')));
+    list.replaceChildren(listing.parent ? h('div', { class: 'group up' }, h('button', { class: 'row', type: 'button', onclick: () => go(listing.parent) }, icon('back', 'sm'), h('div', { class: 'body' }, h('div', { class: 'name' }, 'Up one level')))) : '',
+      rows.length ? h('div', { class: 'group' }, rows) : h('div', { class: 'empty' }, h('p', {}, listing.files ? `No folders here, ${listing.files} ${listing.files === 1 ? 'file' : 'files'}.` : 'This folder is empty.')));
+    const drives = listing.path === 'drives';
+    // long paths lose their start, not their end: rtl box, with the path itself isolated so its slashes stay put
+    where.replaceChildren(...[icon(listing.project ? 'graph' : 'folder', 'sm'), h('span', { class: 'p' }, h('bdi', {}, drives ? 'Pick a drive' : listing.path)),
+      listing.project ? h('span', { class: 'tag' }, 'already a project') : null].filter(Boolean));
+    ghRow.hidden = !!listing.project || listing.git;
+    start.disabled = drives;
+    start.textContent = listing.project ? 'Open this project' : listing.git ? 'Add this repo' : 'Start project here';
+  }
+  async function setup() {
+    if (busy || !listing) return;
+    if (listing.project) return void (location.hash = `#/d/${encodeURIComponent(id)}?new=${encodeURIComponent(listing.project)}`);
+    busy = true; start.disabled = true; start.replaceChildren(h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Setting up…');
+    try {
+      const r = await api(`${dev(id)}projects`, { method: 'POST', body: { path: listing.path, github: github.checked } });
+      toast(r.steps.filter(x => !/^Building/.test(x)).at(-1) ?? 'Project ready');
+      location.hash = `#/d/${encodeURIComponent(id)}?new=${encodeURIComponent(r.name)}`;
+    } catch (e) { toast(e.message); busy = false; paint(); start.disabled = false; }
+  }
+  go(cur);
+}
+
 // ---------- desktop: machines and threads in a sidebar beside whichever screen is open ----------
 const wide = matchMedia('(min-width: 1000px)');
 const side = document.getElementById('side');
@@ -763,9 +844,10 @@ function route() {
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
   const params = new URLSearchParams(query ?? '');
   scrollTo(0, 0);
-  at.dev = parts[0] === 'd' ? parts[1] ?? null : null; at.tid = parts[2] === 't' ? parts[3] ?? null : null;
+  at.dev = parts[0] === 'd' ? parts[1] ?? null : null; at.tid = parts[2] === 't' ? parts[3] ?? null : parts[2] ?? null; // a sub-page (new-project) isn't the device page
   paintSide(!devicesCache || !sideThreads[at.dev]);
   if (parts[0] === 'd' && parts[1] && parts[2] === 't' && parts[3]) return thread(parts[1], parts[3]);
+  if (parts[0] === 'd' && parts[1] && parts[2] === 'new-project') return newProject(parts[1], params);
   if (parts[0] === 'd' && parts[1]) return device(parts[1], params);
   return home();
 }

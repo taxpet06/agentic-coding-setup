@@ -3,6 +3,8 @@
 // remotes, run the Hub app agent, and serve this repo to the Claude iOS app over Remote Control. See HUB.md.
 //   hub scan [--graph]   index repos -> ~/.claude/hub/projects.tsv (--graph: build/refresh graphify graphs too)
 //   hub find <word>      look a project up by any part of its path
+//   hub project <folder> [--local] [--json]   make a folder a project: git, private GitHub repo, index, graph
+//   hub graph <folder>   build or refresh one project's graphify graph
 //   hub pull             fast-forward every repo that has an upstream
 //   hub push <repo>...   commit (auto-sync msg) + pull --rebase + push those repos
 //   hub serve            start `claude remote-control` for the hub in the background
@@ -51,17 +53,25 @@ function* repos(dir = HOME, depth = 0) {
   for (const e of ents.sort((a, b) => (a.name < b.name ? -1 : 1)))
     if (e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('$') && !SKIP.has(e.name)) yield* repos(path.join(dir, e.name), depth + 1);
 }
-const nameOf = p => path.relative(HOME, p).split(path.sep).join('/');
+// projects outside ~ (made with `hub project`, the app's folder browser) are remembered here and indexed too
+const ROOTS = path.join(H, 'roots.txt');
+const roots = () => { try { return fs.readFileSync(ROOTS, 'utf8').split('\n').filter(Boolean); } catch { return []; } };
+const inHome = p => { const r = path.relative(HOME, p); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+const nameOf = p => (inHome(p) ? path.relative(HOME, p) : p.replace(/^[\\/]+/, '')).split(path.sep).join('/');
+const slugOf = p => nameOf(p).replace(/[\/:]/g, '_');
+function graphOne(p, gf = command('graphify')) {
+  if (!gf) return false;
+  const own = fs.existsSync(path.join(p, 'graphify-out', 'graph.json'));
+  // outside the repo when it has no graph yet: nothing new to commit
+  return run(gf.cmd, [...gf.pre, ...(own ? ['update', p] : ['extract', p, '--code-only', '--out', path.join(H, 'graphs', slugOf(p))])], { timeout: 600_000, shell: gf.shell }).ok;
+}
 function scan(graph) {
   const gf = graph === '--graph' ? command('graphify') : null;
-  const rows = [];
-  for (const p of repos()) {
-    const slug = nameOf(p).replace(/\//g, '_');
-    if (gf) {
-      const out = fs.existsSync(path.join(p, 'graphify-out', 'graph.json'));
-      // outside the repo when it has no graph yet: nothing new to commit
-      run(gf.cmd, [...gf.pre, ...(out ? ['update', p] : ['extract', p, '--code-only', '--out', path.join(H, 'graphs', slug)])], { timeout: 600_000, shell: gf.shell });
-    }
+  const rows = [], seen = new Set();
+  for (const p of [...repos(), ...roots().filter(r => fs.existsSync(r)).flatMap(r => [...repos(r, 3)])]) {
+    if (seen.has(p)) continue; seen.add(p);
+    const slug = slugOf(p);
+    if (gf) graphOne(p, gf);
     const g = [path.join(p, 'graphify-out', 'graph.json'), path.join(H, 'graphs', slug, 'graphify-out', 'graph.json')].find(f => fs.existsSync(f)) ?? '-';
     const origin = git(p, ['remote', 'get-url', 'origin']);
     rows.push([nameOf(p), p, origin.ok && origin.out ? origin.out : '-', g].join('\t'));
@@ -198,6 +208,47 @@ WantedBy=default.target
   }
 }
 
+// ---------- new projects ----------
+// Make a folder a project: git (secret-looking files go into .gitignore before the first commit), a private
+// GitHub repo unless --local, then the index and a graph. Safe to re-run: every step checks before it acts.
+async function project(dir, { local = false } = {}) {
+  const p = path.resolve(dir), steps = [];
+  if (!fs.statSync(p, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${p} is not a folder`);
+  if (!git(p, ['rev-parse', '--is-inside-work-tree']).ok || path.resolve(git(p, ['rev-parse', '--show-toplevel']).out) !== p) {
+    if (!git(p, ['init', '-q', '-b', 'main']).ok) throw new Error(`git init failed in ${p}`);
+    steps.push('Started a git repository');
+  }
+  if (!git(p, ['rev-parse', '-q', '--verify', 'HEAD']).ok) { // no commits yet
+    if (!fs.readdirSync(p).some(n => n !== '.git')) { fs.writeFileSync(path.join(p, 'README.md'), `# ${path.basename(p)}\n`); steps.push('Added a README'); }
+    git(p, ['add', '-A']);
+    const secret = git(p, ['diff', '--cached', '--name-only']).out.split('\n').filter(f => f && SECRETS.test(f));
+    if (secret.length) {
+      git(p, ['reset', '-q']);
+      fs.appendFileSync(path.join(p, '.gitignore'), `${fs.existsSync(path.join(p, '.gitignore')) ? '\n' : ''}# kept out of git by hub project\n${secret.map(f => `/${f}`).join('\n')}\n`);
+      git(p, ['add', '-A']);
+      steps.push(`Kept ${secret.join(', ')} out of git (.gitignore)`);
+    }
+    const ident = git(p, ['config', 'user.email']).ok ? [] : ['-c', 'user.name=hub', '-c', 'user.email=hub@localhost'];
+    if (!git(p, [...ident, 'commit', '-qm', 'Start project']).ok) throw new Error('first commit failed');
+    steps.push('Made the first commit');
+  }
+  const hasOrigin = git(p, ['remote', 'get-url', 'origin']).ok;
+  if (!local && !hasOrigin) {
+    const gh = command('gh');
+    if (!gh) steps.push('GitHub CLI (gh) not installed: kept it local');
+    else {
+      const repo = path.basename(p).replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+      const r = run(gh.cmd, [...gh.pre, 'repo', 'create', repo, '--private', '--source', p, '--remote', 'origin', '--push'], { timeout: 120_000, shell: gh.shell });
+      steps.push(r.ok ? `Created the private GitHub repo ${repo} and pushed` : `GitHub repo not created: ${(r.err || r.out).split('\n')[0]}`);
+    }
+  } else if (hasOrigin) steps.push('Already has a remote, left it as is');
+  if (!inHome(p) && !roots().includes(p)) fs.appendFileSync(ROOTS, p + '\n');
+  scan();
+  background([SELF, 'graph', p], path.join(H, 'bg.log'));
+  steps.push('Building its graphify graph in the background');
+  return { name: nameOf(p), path: p, steps };
+}
+
 // ---------- Claude Code hooks ----------
 const stdinJSON = () => { try { return JSON.parse(fs.readFileSync(0, 'utf8')); } catch { return {}; } };
 const bg = (...args) => background([SELF, ...args], path.join(H, 'bg.log'));
@@ -235,6 +286,21 @@ switch (cmd) {
     break;
   }
   case 'pull': await pull(); break;
+  case 'project': {
+    const dir = rest.find(a => !a.startsWith('--'));
+    if (!dir) { console.error('usage: hub project <folder> [--local] [--json]'); process.exit(1); }
+    try {
+      const r = await project(dir, { local: rest.includes('--local') });
+      console.log(rest.includes('--json') ? JSON.stringify(r) : `${r.name}\n${r.steps.map(x => `  ${x}`).join('\n')}`);
+    } catch (e) { console.error(e.message); process.exit(1); }
+    break;
+  }
+  case 'graph': {
+    const dir = rest[0] && path.resolve(rest[0]);
+    if (!dir) { console.error('usage: hub graph <folder>'); process.exit(1); }
+    console.log(graphOne(dir) ? `graph ready for ${dir}` : 'graphify not installed or failed'); scan();
+    break;
+  }
   case 'push': await push(rest); break;
   case 'serve': serve(); break;
   case 'app': await app(rest[0]); break;
@@ -262,6 +328,6 @@ switch (cmd) {
   }
   case 'selftest': await selftest(); break;
   default:
-    console.log(fs.readFileSync(SELF, 'utf8').split('\n').slice(1, 11).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
+    console.log(fs.readFileSync(SELF, 'utf8').split('\n').slice(1, 13).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
     process.exit(cmd ? 1 : 0);
 }

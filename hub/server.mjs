@@ -283,8 +283,10 @@ async function runTurn(t, turn, force) {
   const transcript = asTranscript(t.turns.slice(0, -2)); // everything before this exchange
   const userTurn = t.turns.at(-2);
   const images = (userTurn.images ?? []).map(n => path.join(UPLOADS, t.id, n));
-  // Claude opens attachments with its Read tool; Codex gets them as --image
-  const claudeText = userTurn.text + (images.length ? `\n\n[Attached ${images.length === 1 ? 'image' : 'images'}: open with the Read tool: ${images.join(', ')}]` : '');
+  const files = (userTurn.files ?? []).map(f => path.join(UPLOADS, t.id, f.id, f.name));
+  // Claude opens attachments with its Read tool (images, PDFs, text); Codex gets images as --image and file paths in the text
+  const fileNote = files.length ? `\n\n[Attached ${files.length === 1 ? 'file' : 'files'}: ${files.join(', ')}]` : '';
+  const claudeText = userTurn.text + (images.length ? `\n\n[Attached ${images.length === 1 ? 'image' : 'images'}: open with the Read tool: ${images.join(', ')}]` : '') + fileNote;
   turn.base ??= await gitHead(cwd);
   baseUntracked.set(turn.id, new Set(turn.base ? await untracked(cwd) : []));
   const intro = t.rewound ? lib.REWOUND : undefined;
@@ -314,7 +316,7 @@ async function runTurn(t, turn, force) {
     // Claude gets the stack-router nudge from its UserPromptSubmit hook; Codex has no Claude hooks, so it rides along here
     const hint = family !== 'codex' ? '' : (cwd === HUB_DIR ? '[You are in the hub repo. Projects on this machine: ~/.claude/hub/projects.tsv; `hub find <word>` looks one up.]\n' : '')
       + '[Before acting on a coding, UI, debugging or prose task, read ~/.claude/skills/stack-router/SKILL.md and follow its routing: each skill it names is at ~/.claude/skills/<name>/SKILL.md.]\n\n';
-    const userText = family === 'codex' ? userTurn.text : claudeText;
+    const userText = family === 'codex' ? userTurn.text + fileNote : claudeText;
     const imgs = family === 'codex' ? images : [];
     let res = await runProvider(p, t, turn, hint + carry + userText, cwd, resumeId, imgs);
     if (res.noSession && resumeId) { // transcript file went missing: start a fresh session with the whole history
@@ -348,30 +350,42 @@ function parseSettings(p) {
 
 // Every message goes through the thread's queue: it runs now if the thread is idle, otherwise after the current
 // turn ends (done, failed or stopped), in order. Settings travel with each message and apply when it starts.
-function enqueue(t, p, { front = false, images } = {}) {
+function enqueue(t, p, { front = false, images, files } = {}) {
   if (p.provider && !lib.PROVIDERS.includes(p.provider)) throw new HttpError(400, `Unknown account ${p.provider}`);
   t.queue ??= [];
   if (t.queue.length >= 20) throw new HttpError(429, 'Twenty messages are already queued here.');
   const settings = parseSettings(p);
-  if (!str(p.text)?.trim() && !p.images?.length && !images?.length) throw new HttpError(400, 'Message is empty.');
-  images ??= saveImages(t, p.images);
-  const text = str(p.text)?.trim() || 'Look at the attached image.';
-  const q = { id: crypto.randomUUID(), text, provider: p.provider || null, settings, images, at: Date.now() };
+  if (!str(p.text)?.trim() && !p.images?.length && !images?.length && !files?.length) throw new HttpError(400, 'Message is empty.');
+  if (!images) ({ images, files } = saveAttachments(t, p.images));
+  files ??= [];
+  const text = str(p.text)?.trim() || (images.length && !files.length ? 'Look at the attached image.' : 'Look at the attached files.');
+  const q = { id: crypto.randomUUID(), text, provider: p.provider || null, settings, images, files, at: Date.now() };
   if (front) t.queue.unshift(q); else t.queue.push(q);
   drain(t);
 }
 // attachments arrive as base64 from the app (already downscaled there); they live in STATE/uploads/<thread>/
-function saveImages(t, list) {
-  if (list == null) return [];
-  if (!Array.isArray(list) || list.length > 6) throw new HttpError(400, 'Attach up to six images.');
-  const bufs = list.map(x => {
-    const ext = IMG[x?.type], b = typeof x?.data === 'string' ? Buffer.from(x.data, 'base64') : null;
-    if (!ext || !b?.length) throw new HttpError(400, 'Images must be JPEG, PNG, WebP or GIF.');
-    if (b.length > 10_000_000) throw new HttpError(413, 'Each image must be under 10 MB.');
-    return [ext, b];
+// attachments arrive as base64 from the app: images (already downscaled there) and any other file, kept under its own name.
+// They live in STATE/uploads/<thread>/: images as <uuid>.<ext>, files as <uuid>/<original name>.
+const fileName = n => String(n ?? '').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'file';
+function saveAttachments(t, list) {
+  if (list == null) return { images: [], files: [] };
+  if (!Array.isArray(list) || list.length > 10) throw new HttpError(400, 'Attach up to ten files.');
+  const items = list.map(x => {
+    const b = typeof x?.data === 'string' ? Buffer.from(x.data, 'base64') : null;
+    if (!b?.length) throw new HttpError(400, 'An attachment was empty.');
+    if (b.length > 20_000_000) throw new HttpError(413, 'Each file must be under 20 MB.');
+    return { b, ext: IMG[x.type], name: fileName(x.name), type: str(x.type, 200) || 'application/octet-stream' };
   });
   fs.mkdirSync(path.join(UPLOADS, t.id), { recursive: true });
-  return bufs.map(([ext, b]) => { const n = `${crypto.randomUUID()}.${ext}`; fs.writeFileSync(path.join(UPLOADS, t.id, n), b); return n; });
+  const images = [], files = [];
+  for (const it of items) {
+    const id = crypto.randomUUID();
+    if (it.ext) { fs.writeFileSync(path.join(UPLOADS, t.id, `${id}.${it.ext}`), it.b); images.push(`${id}.${it.ext}`); continue; }
+    fs.mkdirSync(path.join(UPLOADS, t.id, id));
+    fs.writeFileSync(path.join(UPLOADS, t.id, id, it.name), it.b);
+    files.push({ id, name: it.name, size: it.b.length, type: it.type });
+  }
+  return { images, files };
 }
 function queueChanged(t) { saveThread(t, true); emit(t.id, { type: 'queue', queue: t.queue }); }
 function drain(t) {
@@ -379,15 +393,15 @@ function drain(t) {
   const q = t.queue.shift();
   Object.assign(t, q.settings);
   queueChanged(t);
-  startTurn(t, q.text, q.provider || undefined, q.images);
+  startTurn(t, q.text, q.provider || undefined, q.images, q.files);
 }
 
-function startTurn(t, text, force, images = []) {
+function startTurn(t, text, force, images = [], files = []) {
   if (running.has(t.id)) throw new HttpError(409, 'This thread is still working. Stop it first, or wait.');
   if (!text?.trim()) throw new HttpError(400, 'Message is empty.');
   if (force && !lib.PROVIDERS.includes(force)) throw new HttpError(400, `Unknown account ${force}`);
   const now = Date.now();
-  t.turns.push({ id: crypto.randomUUID(), role: 'user', text: text.trim(), at: now, ...(images.length ? { images } : {}) });
+  t.turns.push({ id: crypto.randomUUID(), role: 'user', text: text.trim(), at: now, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}) });
   if (t.auto && !t.project) {
     const m = lib.matchProject(text, projects());
     if (m) t.project = { name: m.name, path: m.path };
@@ -576,16 +590,53 @@ async function local(req, res, parts) {
     await sendPush({ title: str(p.title, 200) ?? 'Hub', body: str(p.body, 500) ?? '', url: str(p.url, 300) ?? '/', tag: str(p.tag, 100) ?? undefined, device: str(p.device, 100) });
     return json(res, 200, { ok: true });
   }
+  // ---- folder browser (the whole disk, folders only) and new projects ----
+  if (a === 'fs' && m === 'GET') {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const want = q.get('path') || HOME, hidden = q.get('hidden') === '1';
+    if (WIN && want === 'drives') { // the top of a Windows disk: its drives
+      const drives = [...'CDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:\\`).filter(d => fs.existsSync(d));
+      return json(res, 200, { path: 'drives', parent: null, crumbs: [{ name: 'This PC', path: 'drives' }], entries: drives.map(d => ({ name: d.slice(0, 2), path: d })) });
+    }
+    const dir = path.resolve(want);
+    let ents; try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { throw new HttpError(e.code === 'EACCES' || e.code === 'EPERM' ? 403 : 404, `Can't open ${dir}: ${e.code}`); }
+    const known = new Map(projects().map(x => [path.resolve(x.path), x]));
+    const entries = ents.filter(e => (e.isDirectory() || (e.isSymbolicLink() && fs.statSync(path.join(dir, e.name), { throwIfNoEntry: false })?.isDirectory())) && (hidden || !e.name.startsWith('.')) && e.name !== 'node_modules')
+      .map(e => { const full = path.join(dir, e.name); return { name: e.name, path: full, project: known.get(full)?.name ?? null, git: fs.existsSync(path.join(full, '.git')) }; })
+      .sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: 'base', numeric: true }));
+    const root = path.parse(dir).root, crumbs = [];
+    for (let d = dir; ; d = path.dirname(d)) { crumbs.unshift({ name: d === root ? (WIN ? root.slice(0, 2) : '/') : path.basename(d), path: d }); if (d === root) break; }
+    if (WIN) crumbs.unshift({ name: 'This PC', path: 'drives' });
+    return json(res, 200, { path: dir, home: HOME, parent: dir === root ? (WIN ? 'drives' : null) : path.dirname(dir), crumbs, entries,
+      project: known.get(dir)?.name ?? null, git: fs.existsSync(path.join(dir, '.git')), files: ents.filter(e => e.isFile()).length });
+  }
+  if (a === 'fs' && b === 'mkdir' && m === 'POST') {
+    const p = await body(req);
+    const name = str(p.name, 200)?.trim();
+    if (!name || /[\\/:*?"<>|\x00-\x1f]/.test(name) || /^\.+$/.test(name)) throw new HttpError(400, 'Folder names can’t contain / \\ : * ? " < > |');
+    const dir = path.join(path.resolve(str(p.path, 4000) ?? HOME), name);
+    try { await fsp.mkdir(dir); } catch (e) { throw new HttpError(e.code === 'EEXIST' ? 409 : 400, e.code === 'EEXIST' ? `${name} already exists here.` : `Couldn’t create it: ${e.code}`); }
+    return json(res, 201, { path: dir });
+  }
+  if (a === 'projects' && m === 'POST') { // hub project <folder>: git, private GitHub repo, index, graph
+    const p = await body(req);
+    const dir = str(p.path, 4000);
+    if (!dir || !path.isAbsolute(dir)) throw new HttpError(400, 'Pick a folder first.');
+    try {
+      const out = (await run(process.execPath, [HUB_CLI, 'project', dir, '--json', ...(p.github === false ? ['--local'] : [])], { timeout: 300_000 })).stdout.trim().split('\n').at(-1);
+      return json(res, 201, JSON.parse(out));
+    } catch (e) { throw new HttpError(400, (e.stderr || e.message || 'Setup failed').trim().split('\n').at(-1)); }
+  }
   if (a === 'threads' && !b && m === 'GET') return json(res, 200, [...threads.values()].map(summary).sort((x, y) => y.updatedAt - x.updatedAt));
   if (a === 'threads' && !b && m === 'POST') {
-    const p = await body(req, 30_000_000);
+    const p = await body(req, 60_000_000);
     const text = str(p.text);
     let project = null;
     if (p.project) {
       project = projects().find(x => x.name === p.project);
       if (!project) throw new HttpError(404, `No project ${p.project} on ${me.id}`);
     }
-    const t = { id: crypto.randomUUID(), title: (text ?? '').trim().replace(/\s+/g, ' ').slice(0, 80) || (p.images?.length ? 'Image' : 'New thread'), auto: !project,
+    const t = { id: crypto.randomUUID(), title: (text ?? '').trim().replace(/\s+/g, ' ').slice(0, 80) || (p.images?.length ? (p.images[0]?.name ?? 'Attachment') : 'New thread'), auto: !project,
       project: project ? { name: project.name, path: project.path } : null, createdAt: Date.now(), updatedAt: Date.now(),
       status: 'idle', provider: null, model: null, effort: null, mode: null, queue: [], sessions: { claude: null, codex: null }, turns: [] };
     threads.set(t.id, t);
@@ -601,7 +652,7 @@ async function local(req, res, parts) {
     await fsp.rename(path.join(THREADS, `${t.id}.json`), path.join(THREADS, 'archive', `${t.id}.json`)).catch(() => {});
     return json(res, 200, { ok: true });
   }
-  if (t && c === 'messages' && m === 'POST') { enqueue(t, await body(req, 30_000_000)); return json(res, 202, summary(t)); }
+  if (t && c === 'messages' && m === 'POST') { enqueue(t, await body(req, 60_000_000)); return json(res, 202, summary(t)); }
   if (t && c === 'queue' && parts[3] && m === 'DELETE') { // drop one queued message
     t.queue = (t.queue ?? []).filter(q => q.id !== parts[3]);
     queueChanged(t);
@@ -619,7 +670,7 @@ async function local(req, res, parts) {
   }
   if (t && c === 'rewind' && m === 'POST') { // edit or retry: drop this message and everything after it, then send it again
     if (running.has(t.id)) throw new HttpError(409, 'Stop this turn before editing or retrying.');
-    const p = await body(req, 30_000_000);
+    const p = await body(req, 60_000_000);
     const i = t.turns.findIndex(x => x.id === p.turnId && x.role === 'user');
     if (i < 0) throw new HttpError(404, 'No such message.');
     const orig = t.turns[i];
@@ -629,7 +680,7 @@ async function local(req, res, parts) {
     fs.appendFileSync(path.join(THREADS, 'archive', `${t.id}.rewound.jsonl`), JSON.stringify({ at: Date.now(), turns: removed }) + '\n');
     t.sessions = { claude: null, codex: null }; t.rewound = true; // a fresh session gets the earlier turns as a recap
     if (i === 0) t.title = text.replace(/\s+/g, ' ').slice(0, 80);
-    enqueue(t, { ...p, text }, { front: true, images: orig.images ?? [] });
+    enqueue(t, { ...p, text }, { front: true, images: orig.images ?? [], files: orig.files ?? [] });
     return json(res, 202, summary(t));
   }
   if (t && c === 'images' && parts[3] && m === 'GET') {
@@ -638,6 +689,14 @@ async function local(req, res, parts) {
     if (!data) throw new HttpError(404, 'Not found');
     const type = Object.keys(IMG).find(k => IMG[k] === path.extname(parts[3]).slice(1));
     res.writeHead(200, { 'content-type': type, 'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
+    return res.end(data);
+  }
+  if (t && c === 'files' && parts[3] && parts[4] && m === 'GET') {
+    const f = (t.turns.flatMap(x => x.files ?? [])).find(x => x.id === parts[3] && x.name === decodeURIComponent(parts[4]));
+    if (!f) throw new HttpError(404, 'Not found');
+    const data = await fsp.readFile(path.join(UPLOADS, t.id, f.id, f.name)).catch(() => null);
+    if (!data) throw new HttpError(404, 'Not found');
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`, 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=31536000' });
     return res.end(data);
   }
   if (t && c === 'stop' && m === 'POST') {
