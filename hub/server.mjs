@@ -569,6 +569,7 @@ async function remoteControl() { // `hub serve`: a tmux session on Linux/macOS, 
 async function info() {
   return { id: me.id, dns: me.dns, os: me.os, version: VERSION, hubDir: HUB_DIR, accounts: effectiveAccounts(), ready: ready(),
     next: lib.pickProvider(effectiveAccounts(), Date.now(), { installed: ready() }),
+    live: [...new Set([...running.keys()].map(id => threads.get(id)?.provider).filter(Boolean))], // accounts running a turn right now
     running: running.size, threads: threads.size, projects: projects().length, remoteControl: await remoteControl(),
     pushSubs: push.subs.length, now: Date.now() };
 }

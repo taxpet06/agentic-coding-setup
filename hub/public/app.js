@@ -92,20 +92,24 @@ function bar({ back, mid, end = [], always = false }) {
 }
 const navIcon = (name, label, onclick, attrs = {}) => h('button', { class: 'navbtn', 'aria-label': label, title: label, onclick, ...attrs }, icon(name));
 
+// the signature: a machine's three accounts as a scoreboard row; the one used next holds possession
 function meters(info) {
   const now = info.now ?? Date.now();
-  return h('div', { class: 'meters', role: 'list', 'aria-label': 'Agent accounts' }, PROVIDERS.map(p => {
+  return h('div', { class: 'board', role: 'list', 'aria-label': 'Agent accounts' }, PROVIDERS.map(p => {
     const a = info.accounts?.[p] ?? {};
-    const out = a.limitedUntil && a.limitedUntil > now, off = !a.installed || !a.loggedIn;
+    // possession (and the reserved orange) is the account running a turn now; the one used next just says so, in neutral text
+    const out = a.limitedUntil && a.limitedUntil > now, off = !a.installed || !a.loggedIn, live = !!info.live?.includes(p), next = !live && info.next === p;
     const pct = a.utilization != null ? Math.round(a.utilization * 100) : null;
-    const right = out ? `out · ${clock(a.limitedUntil)}` : off ? (a.installed ? 'logged out' : 'not set up') : pct != null ? `${pct}% used` : 'ready';
-    return h('div', { class: `meter c-${p}${out ? ' out' : ''}${off ? ' off' : ''}${info.next === p ? ' next' : ''}`, role: 'listitem',
-      'aria-label': `${LABEL[p]}: ${right}${info.next === p ? ', used next' : ''}` },
-      h('div', { class: 'k' }, SHORT[p]),
-      h('div', { class: 'track' }, h('div', { class: 'fill', style: { '--w': `${pct ?? 0}%` } })),
-      h('div', { class: 'v num' }, right));
+    const state = out ? `back ${clock(a.limitedUntil)}` : off ? (a.installed ? 'logged out' : 'not set up') : pct != null ? 'used' : 'ready';
+    return h('div', { class: `cell c-${p}${out ? ' out' : ''}${off ? ' off' : ''}${live ? ' live' : ''}${next ? ' next' : ''}`, role: 'listitem',
+      'aria-label': `${LABEL[p]}: ${out ? `out of usage until ${clock(a.limitedUntil)}` : pct != null ? `${pct}% used` : state}${live ? ', running now' : next ? ', used next' : ''}` },
+      h('div', { class: 'k' }, live ? h('span', { class: 'poss', 'aria-hidden': 'true' }) : null, h('span', { class: 'kn' }, SHORT[p])),
+      h('div', { class: 'score num', 'aria-hidden': 'true' }, out ? 'OUT' : off || pct == null ? '—' : [String(pct), h('small', {}, '%')]),
+      h('div', { class: 'v', 'aria-hidden': 'true' }, next && !out && !off ? 'next up' : state));
   }));
 }
+// scoreboard clock: 04:31, or 1:04:31 past an hour
+const gameClock = ms => { const s = Math.max(0, Math.floor(ms / 1000)), hh = Math.floor(s / 3600), mm = Math.floor(s / 60) % 60, ss = String(s % 60).padStart(2, '0'); return hh ? `${hh}:${String(mm).padStart(2, '0')}:${ss}` : `${String(mm).padStart(2, '0')}:${ss}`; };
 
 // ---------- home: devices ----------
 async function home() {
@@ -131,11 +135,12 @@ async function home() {
 }
 function deviceRow(d) {
   const info = d.info ?? d.lastInfo;
-  const meta = d.hub ? `${info.running ? `${info.running} running · ` : ''}${info.threads} ${info.threads === 1 ? 'thread' : 'threads'} · ${info.projects} ${info.projects === 1 ? 'project' : 'projects'}` : `offline${d.lastSeen ? ` · seen ${ago(Date.parse(d.lastSeen))} ago` : ''}`;
-  return h('a', { class: `row top${d.hub ? '' : ' dim'}`, href: `#/d/${encodeURIComponent(d.id)}` },
-    h('span', { class: `dot${info?.running ? ' run' : d.hub ? ' on' : ''}`, 'aria-label': d.hub ? 'online' : 'offline' }),
+  const meta = d.hub ? `${info.threads} ${info.threads === 1 ? 'thread' : 'threads'} · ${info.projects} ${info.projects === 1 ? 'project' : 'projects'}` : `offline${d.lastSeen ? ` · seen ${ago(Date.parse(d.lastSeen))} ago` : ''}`;
+  return h('a', { class: `row top machine${d.hub ? '' : ' dim'}`, href: `#/d/${encodeURIComponent(d.id)}` },
+    h('span', { class: `dot${info?.running ? ' run' : d.hub ? ' on' : ''}`, 'aria-label': info?.running ? 'running' : d.hub ? 'online' : 'offline' }),
     h('div', { class: 'body' },
-      h('div', { class: 'name' }, d.id, d.self ? h('span', { class: 'tag' }, 'serving this app') : null),
+      h('div', { class: 'name' }, d.id, d.self ? h('span', { class: 'tag' }, 'serving this app') : null,
+        d.hub ? h('span', { class: `count num${info.running ? ' on' : ''}` }, String(info.running ?? 0), h('small', {}, ' running')) : null),
       h('div', { class: 'meta num' }, meta),
       info && d.hub ? meters(info) : null),
     icon('chev', 'chev'));
@@ -236,7 +241,7 @@ async function device(id, params) {
       content.replaceChildren(accountsPanel(id, info, next => { info = next; paint(); }),
         h('p', { class: 'hint', style: { 'margin-top': '14px' } },
           'New turns use Claude personal, then Claude school, then Codex. An account near the end of its 5-hour window hands over early, and the conversation carries across.'),
-        info.remoteControl ? h('p', { class: 'hint', style: { 'margin-top': '10px' } }, 'Remote Control is running too: Claude app → Code → hub, for interactive approvals.') : null);
+        ...(info.remoteControl ? [h('p', { class: 'hint', style: { 'margin-top': '10px' } }, 'Remote Control is running too: Claude app → Code → hub, for interactive approvals.')] : [])); // (replaceChildren would print a null)
     }
   }
   async function load() {
@@ -563,7 +568,7 @@ function thread(id, tid) {
     const q = t?.queue ?? [];
     queueEl.hidden = !q.length;
     queueEl.replaceChildren(...q.map((m, i) => h('div', { class: 'q' },
-      h('span', { class: 'k' }, i ? `Then` : 'Next'),
+      h('span', { class: 'k' }, i ? 'Then' : 'On deck'),
       h('span', { class: 't' }, m.text),
       h('button', { class: 'qb', type: 'button', 'aria-label': 'Edit queued message', onclick: async () => {
         try { await api(`${dev(id)}threads/${tid}/queue/${m.id}`, { method: 'DELETE' }); input.value = input.value.trim() ? `${input.value}\n${m.text}` : m.text; if (!editing) saved.set(dkey, input.value); grow(); paintSend(); input.focus(); } catch (e) { toast(e.message); }
@@ -578,12 +583,14 @@ function thread(id, tid) {
     const running = t.status === 'running';
     const pending = (last?.items ?? []).filter(i => (i.kind === 'approval' || i.kind === 'question') && i.status === 'pending');
     const asks = pending.length;
-    band.className = `band${asks ? ' ask' : running ? ' running' : last?.status === 'failed' ? ' failed' : ''}`;
+    band.className = `band${asks ? ' ask' : running ? ' running' : last?.status === 'failed' ? ' failed' : last?.status === 'stopped' || last?.status === 'interrupted' ? ' stopped' : ''}`;
     const who = last?.provider ? SHORT[last.provider] : running ? 'picking an account' : '';
     const word = asks ? (pending.some(i => i.kind === 'question') ? 'Claude asks' : 'Needs you') : running ? 'Working' : { done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' }[last?.status] ?? 'Idle';
-    const time = running ? dur(Date.now() - last.startedAt) : last?.endedAt ? (ago(last.endedAt) === 'now' ? 'just now' : `${ago(last.endedAt)} ago`) : '';
-    const q = t.queue?.length ? `${t.queue.length} queued` : '';
-    bandWhat.replaceChildren(h('b', {}, word), [who, time, q].filter(Boolean).map(s => ` · ${s}`).join(''));
+    // the band is the game clock while a turn runs; otherwise the final word and when
+    const time = running ? null : last?.endedAt ? (ago(last.endedAt) === 'now' ? 'just now' : `${ago(last.endedAt)} ago`) : '';
+    bandWhat.replaceChildren(...[h('b', {}, word), running ? h('span', { class: 'clock num', 'aria-label': `${dur(Date.now() - last.startedAt)} so far` }, gameClock(Date.now() - last.startedAt)) : null,
+      [who, time].filter(Boolean).map(s => ` · ${s}`).join(''),
+      t.queue?.length ? h('span', { class: 'deck' }, h('b', {}, 'On deck'), h('span', { class: 'n num' }, String(t.queue.length))) : null].filter(Boolean));
     archive.disabled = running;
     paintSend();
   }
@@ -608,7 +615,7 @@ function thread(id, tid) {
       if (it.kind === 'text') el.append(prose(it.text));
       else if (it.kind === 'seam') el.append(h('div', { class: 'seam', role: 'note' }, h('span', { class: 'lab' },
         h('span', { class: 'dot from', style: { '--cf': `var(--${it.from})` } }), '→', h('span', { class: 'dot to', style: { '--ct': `var(--${it.to})` } }),
-        ` ${LABEL[it.to]} took over · ${it.reason}`)));
+        h('b', { class: 'sub' }, 'SUB'), ` ${LABEL[it.to]} in · ${it.reason}`)));
       else if (it.kind === 'approval') el.append(approvalCard(it));
       else if (it.kind === 'question') el.append(questionCard(it));
       else if (it.kind === 'changes') el.append(changesCard(it));
@@ -786,7 +793,7 @@ function browse(id, params, mode) {
   }
   function paint() {
     // (replaceChildren takes nodes, not arrays or nulls: flatten and drop the gaps)
-    crumbs.replaceChildren(...listing.crumbs.flatMap((c, i) => [i ? h('span', { class: 'sep', 'aria-hidden': 'true' }, '/') : null,
+    crumbs.replaceChildren(...listing.crumbs.flatMap((c, i) => [i && listing.crumbs[i - 1].name !== '/' ? h('span', { class: 'sep', 'aria-hidden': 'true' }, '/') : null,
       i === listing.crumbs.length - 1 ? h('span', { class: 'cur', 'aria-current': 'location' }, c.name) : h('button', { type: 'button', onclick: () => go(c.path) }, c.name)]).filter(Boolean));
     requestAnimationFrame(() => { crumbs.scrollLeft = crumbs.scrollWidth; });
     const f = filter.value.trim().toLowerCase(), match = n => !f || n.toLowerCase().includes(f);

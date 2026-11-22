@@ -54,4 +54,4 @@ Real devices (dell-linux, hp-linux, dell-wsl, TaxBook), real repos in `~/.claude
 
 ## Accessibility & Inclusion
 
-Dynamic Type-friendly sizes, 44pt touch targets, works in light and dark *(inferred)*.
+Dynamic Type-friendly sizes, 44pt touch targets. Dark only (the owner's call: used mostly at night and on a laptop).
