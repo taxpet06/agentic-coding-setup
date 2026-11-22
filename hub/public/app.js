@@ -470,7 +470,7 @@ function changesCard(it) {
       h('span', { class: 'num c' }, f.add ? h('span', { class: 'plus' }, `+${f.add}`) : null, f.del ? h('span', { class: 'minus' }, ` −${f.del}`) : null))),
       it.more ? h('div', { class: 'f more' }, `${it.more} more`) : null));
 }
-const HIDDEN = new Set(['Skill', 'TodoWrite', 'AskUserQuestion']); // drawn as the skill labels and the plan card instead
+const HIDDEN = new Set(['Skill', 'TodoWrite', 'AskUserQuestion', 'mcp__hub__attach_file', 'hub.attach_file']); // drawn as labels, the plan card, question cards and file cards // drawn as the skill labels and the plan card instead
 
 // ---------- thread ----------
 function thread(id, tid) {
@@ -612,6 +612,7 @@ function thread(id, tid) {
       else if (it.kind === 'approval') el.append(approvalCard(it));
       else if (it.kind === 'question') el.append(questionCard(it));
       else if (it.kind === 'changes') el.append(changesCard(it));
+      else if (it.kind === 'file') el.append(fileCard(it));
       else if (it.kind === 'note') el.append(it.tone === 'error' ? h('div', {}, h('span', { class: 'stamp bad' }, 'Failed'), h('div', { class: 'note bad' }, it.text)) : h('p', { class: 'note' }, it.text));
       // streamed text was already on screen, so only cards and notes ease in
       if (it.kind !== 'text') el.children[at]?.setAttribute('data-k', `${turn.id}:${idx}`);
@@ -628,12 +629,23 @@ function thread(id, tid) {
     return el;
   }
   const imgUrl = n => `/api/${dev(id)}threads/${tid}/images/${n}`;
+  // a file kept with this thread opens in the file viewer; Back comes here
+  const viewHref = (stored, from) => `#/d/${encodeURIComponent(id)}/file?path=${encodeURIComponent(stored)}&from=${encodeURIComponent(from ?? '')}&back=${encodeURIComponent(location.hash)}`;
+  function fileCard(it) {
+    const raw = `/api/${dev(id)}fs/raw?path=${encodeURIComponent(it.stored)}`;
+    return h('div', { class: 'file-card' },
+      it.image ? h('a', { class: 'fc-img', href: viewHref(it.stored, it.src), 'aria-label': `Open ${it.name}` }, h('img', { src: raw, alt: it.caption ?? it.name, loading: 'lazy' })) : null,
+      h('a', { class: 'fc-row', href: viewHref(it.stored, it.src) }, icon(it.image ? 'image' : 'file', 'sm'),
+        h('span', { class: 'fc-b' }, h('span', { class: 'fc-n' }, it.name), h('span', { class: 'fc-m num' }, [size(it.size), it.caption].filter(Boolean).join(' · '))),
+        icon('chev', 'chev')),
+      h('a', { class: 'fc-dl', href: `${raw}&download=1`, download: it.name, 'aria-label': `Download ${it.name}`, title: 'Download' }, icon('download', 'sm')));
+  }
   function userBubble(turn) {
     const wrap = h('div', { class: 'msg-user-wrap', 'data-id': turn.id, 'data-k': turn.id });
     if (turn.images?.length) wrap.append(h('div', { class: 'imgs' }, turn.images.map((n, i) =>
       h('a', { href: imgUrl(n), target: '_blank', rel: 'noopener', 'aria-label': `Attached image ${i + 1}` }, h('img', { src: imgUrl(n), alt: '', loading: 'lazy' })))));
     if (turn.files?.length) wrap.append(h('div', { class: 'files' }, turn.files.map(f =>
-      h('a', { class: 'fchip', href: `/api/${dev(id)}threads/${tid}/files/${f.id}/${encodeURIComponent(f.name)}`, download: f.name, title: `Download ${f.name}` },
+      h('a', f.stored ? { class: 'fchip', href: viewHref(f.stored, f.name), title: `Open ${f.name}` } : { class: 'fchip', href: `/api/${dev(id)}threads/${tid}/files/${f.id}/${encodeURIComponent(f.name)}`, download: f.name, title: `Download ${f.name}` },
         icon('file', 'sm'), h('span', {}, f.name), h('small', { class: 'num' }, size(f.size))))));
     const lastUser = t.turns.findLast(x => x.role === 'user') === turn;
     // the newest message shows its actions; tap an older one to reveal them
@@ -822,21 +834,21 @@ function csvRows(text, sep) { // quoted fields, doubled quotes, newlines inside 
   return rows;
 }
 function fileView(id, params) {
-  const p = params.get('path') ?? '';
+  const p = params.get('path') ?? '', shown = params.get('from') || p; // a chat attachment opens its kept copy but shows where it came from
   const raw = (extra = '') => `/api/${dev(id)}fs/raw?path=${encodeURIComponent(p)}${extra}`;
   const body = h('div', { class: 'viewer' }, h('div', { class: 'skel' }));
-  const sub = h('p', { class: 'subtitle fpath' }, h('bdi', {}, p));
-  const back = `#/d/${encodeURIComponent(id)}/files?path=${encodeURIComponent(p.replace(/[\\/][^\\/]*$/, '') || '/')}`;
+  const sub = h('p', { class: 'subtitle fpath' }, h('bdi', {}, shown));
+  const back = params.get('back') || `#/d/${encodeURIComponent(id)}/files?path=${encodeURIComponent(p.replace(/[\\/][^\\/]*$/, '') || '/')}`;
   const wrapBtn = h('button', { class: 'btn quiet sm', type: 'button', hidden: true, 'aria-pressed': 'false', onclick: () => { const on = body.classList.toggle('wrap'); wrapBtn.setAttribute('aria-pressed', String(on)); } }, 'Wrap lines');
   const srcBtn = h('button', { class: 'btn quiet sm', type: 'button', hidden: true, 'aria-pressed': 'false' }, 'Source');
   const acts = h('div', { class: 'composer fs-bar' }, h('div', { class: 'wrap' }, h('div', { class: 'file-acts' },
     h('a', { class: 'btn quiet sm', href: raw('&download=1'), download: '' }, 'Download'),
     navigator.share ? h('button', { class: 'btn quiet sm', type: 'button', onclick: () => shareFile() }, 'Share') : null,
-    h('button', { class: 'btn quiet sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(p); toast('Path copied'); } catch { toast('Couldn’t copy'); } } }, 'Copy path'),
+    h('button', { class: 'btn quiet sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(shown); toast('Path copied'); } catch { toast('Couldn’t copy'); } } }, 'Copy path'),
     h('span', { class: 'grow' }),
     h('button', { class: 'btn sm', type: 'button', onclick: () => askAgent() }, 'Ask the agent'))));
   const name = p.split(/[\\/]/).pop();
-  mount(h('main', { class: 'screen has-composer' }, bar({ back: { href: back, label: 'Files' }, mid: name }), h('h1', { class: 'title clamp file-title' }, name), sub,
+  mount(h('main', { class: 'screen has-composer' }, bar({ back: { href: back, label: params.get('back') ? 'Chat' : 'Files' }, mid: name }), h('h1', { class: 'title clamp file-title' }, name), sub,
     h('div', { class: 'fs-tools' }, wrapBtn, srcBtn, h('span', { class: 'meta num', id: 'fmeta' })), body), acts);
   const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${acts.offsetHeight}px`)); ro.observe(acts); onCleanup(() => ro.disconnect());
 
@@ -849,8 +861,8 @@ function fileView(id, params) {
   }
   async function askAgent() { // a new thread in the project that holds this file, with its path already typed
     const projects = await api(`${dev(id)}projects`).catch(() => []);
-    const own = projects.filter(x => p.startsWith(x.path + (x.path.includes('\\') ? '\\' : '/'))).sort((a, b) => b.path.length - a.path.length)[0];
-    saved.set(`${id}/new`, `About \`${p}\`: `);
+    const own = projects.filter(x => shown.startsWith(x.path + (x.path.includes('\\') ? '\\' : '/'))).sort((a, b) => b.path.length - a.path.length)[0];
+    saved.set(`${id}/new`, `About \`${shown}\`: `);
     location.hash = `#/d/${encodeURIComponent(id)}?new=${encodeURIComponent(own?.name ?? '')}`;
   }
   async function load(reveal = false) {

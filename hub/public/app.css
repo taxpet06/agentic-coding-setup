@@ -605,3 +605,17 @@ body.wide .code-view { margin: 0; border-radius: 12px; }
 .file-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .file-acts .grow { flex: 1; }
 .file-acts a.btn { text-decoration: none; }
+
+/* ---------- files the agent attached ---------- */
+.file-card { position: relative; display: grid; margin: 4px 0 12px; max-width: 520px; background: var(--panel); border-radius: 14px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--seam); }
+.fc-img { display: block; background: var(--panel-2); }
+.fc-img img { display: block; width: 100%; max-height: 320px; object-fit: contain; }
+.fc-row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 52px 8px 12px; color: var(--text); text-decoration: none; }
+.fc-row > svg.i.sm { color: var(--text-2); flex: none; }
+.fc-row .chev { display: none; }
+.fc-b { display: grid; min-width: 0; }
+.fc-n { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-m { font-size: 13px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-dl { position: absolute; right: 6px; bottom: 6px; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 10px; color: var(--text-2); }
+.fc-dl:active, .fc-row:active { background: var(--press); }
+@media (hover: hover) { .fc-row:hover, .fc-dl:hover { background: var(--press); } }

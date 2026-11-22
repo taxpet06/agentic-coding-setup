@@ -26,7 +26,11 @@ const PERMISSION_MODE = process.env.HUB_PERMISSION_MODE || 'auto';
 const TURN_TIMEOUT = Number(process.env.HUB_TURN_TIMEOUT_MIN || 120) * 60_000;
 const VERSION = 1;
 const UPLOADS = path.join(STATE, 'uploads');
-const APPROVAL_TOKEN = crypto.randomBytes(24).toString('hex'); // lets approve.mjs, spawned by our own Claude turns, reach /api/approvals
+const APPROVAL_TOKEN = crypto.randomBytes(24).toString('hex'); // lets mcp.mjs, spawned by our own agent turns, reach /api/approvals and /api/attach
+const MCP = path.join(import.meta.dirname, 'mcp.mjs');
+const hubEnv = (t, turn, tools) => ({ HUB_URL: `http://127.0.0.1:${PORT}`, HUB_TOKEN: APPROVAL_TOKEN, HUB_THREAD: t.id, HUB_TURN: turn.id, HUB_TOOLS: tools });
+// what every agent should know about where its user is
+const HUB_NOTE = 'You are running inside the Hub app: the user reads this conversation on their phone or another computer and cannot see this machine\'s disk. When you make or find a file they should look at (a report, chart, screenshot, PDF, CSV, log, or a file you changed), attach it with the hub attach_file tool instead of pasting its contents.';
 // file explorer: what can be shown in the app, and what counts as a secret (needs a deliberate Reveal)
 const VIEW_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml', pdf: 'application/pdf' };
 const SECRET_FILE = /([\\/]\.ssh[\\/])|([\\/](\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)[^\\/]*|credentials\.json|\.credentials\.json|auth\.json|\.netrc|\.npmrc|\.pypirc)$)/i;
@@ -217,10 +221,9 @@ function runProvider(p, t, turn, prompt, cwd, resumeId, images = []) {
     const model = t.model || process.env.HUB_CLAUDE_MODEL;
     if (model) args.push('--model', model);
     if (t.effort) args.push('--effort', t.effort);
-    // anything that would ask for permission is relayed to the phone (see approve.mjs); --mcp-config takes several values, so it goes last
-    const hub = { command: process.execPath, args: [path.join(import.meta.dirname, 'approve.mjs')],
-      env: { HUB_URL: `http://127.0.0.1:${PORT}`, HUB_TOKEN: APPROVAL_TOKEN, HUB_THREAD: t.id, HUB_TURN: turn.id } };
-    args.push('--permission-prompt-tool', 'mcp__hub__approve', '--mcp-config', JSON.stringify({ mcpServers: { hub } }));
+    // permission prompts go to the phone and files can be attached to the chat (mcp.mjs); --mcp-config takes several values, so it goes last
+    const hub = { command: process.execPath, args: [MCP], env: hubEnv(t, turn, 'approve,attach_file') };
+    args.push('--append-system-prompt', HUB_NOTE, '--permission-prompt-tool', 'mcp__hub__approve', '--mcp-config', JSON.stringify({ mcpServers: { hub } }));
     env.MCP_TOOL_TIMEOUT = '3600000'; // a prompt may wait an hour for an answer
   } else {
     const c = command('codex');
@@ -228,6 +231,10 @@ function runProvider(p, t, turn, prompt, cwd, resumeId, images = []) {
     cmd = c.cmd; shell = c.shell;
     const cfg = ['-c', `sandbox_mode="${lib.codexSandbox(t.mode || PERMISSION_MODE)}"`, '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true'];
     if (t.effort) cfg.push('-c', `model_reasoning_effort="${t.effort}"`);
+    // the hub's attach_file tool, as a Codex MCP server (TOML values; JSON strings and arrays are valid TOML)
+    const env = Object.entries(hubEnv(t, turn, 'attach_file')).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(',');
+    cfg.push('-c', `mcp_servers.hub.command=${JSON.stringify(process.execPath)}`, '-c', `mcp_servers.hub.args=${JSON.stringify([MCP])}`, '-c', `mcp_servers.hub.env={${env}}`,
+      '-c', 'mcp_servers.hub.default_tools_approval_mode="approve"'); // with approval_policy=never Codex refuses MCP tools that aren't pre-approved
     if (cwd === HUB_DIR) cfg.push('-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(HOME)}]`);
     const img = images.flatMap(f => ['--image', f]); // before --json: --image takes several values
     args = [...c.pre, ...(resumeId ? ['exec', 'resume', resumeId, ...img, '--json', '--skip-git-repo-check', ...cfg, '-'] : ['exec', ...img, '--json', '--skip-git-repo-check', ...cfg, '-'])];
@@ -319,7 +326,8 @@ async function runTurn(t, turn, force) {
       ? `[The previous assistant was cut off by a usage limit partway through this request. Its progress:]\n${partial}\n\n` : '');
     // Claude gets the stack-router nudge from its UserPromptSubmit hook; Codex has no Claude hooks, so it rides along here
     const hint = family !== 'codex' ? '' : (cwd === HUB_DIR ? '[You are in the hub repo. Projects on this machine: ~/.claude/hub/projects.tsv; `hub find <word>` looks one up.]\n' : '')
-      + '[Before acting on a coding, UI, debugging or prose task, read ~/.claude/skills/stack-router/SKILL.md and follow its routing: each skill it names is at ~/.claude/skills/<name>/SKILL.md.]\n\n';
+      + '[Before acting on a coding, UI, debugging or prose task, read ~/.claude/skills/stack-router/SKILL.md and follow its routing: each skill it names is at ~/.claude/skills/<name>/SKILL.md.]\n'
+      + `[${HUB_NOTE}]\n\n`;
     const userText = family === 'codex' ? userTurn.text + fileNote : claudeText;
     const imgs = family === 'codex' ? images : [];
     let res = await runProvider(p, t, turn, hint + carry + userText, cwd, resumeId, imgs);
@@ -387,7 +395,7 @@ function saveAttachments(t, list) {
     if (it.ext) { fs.writeFileSync(path.join(UPLOADS, t.id, `${id}.${it.ext}`), it.b); images.push(`${id}.${it.ext}`); continue; }
     fs.mkdirSync(path.join(UPLOADS, t.id, id));
     fs.writeFileSync(path.join(UPLOADS, t.id, id, it.name), it.b);
-    files.push({ id, name: it.name, size: it.b.length, type: it.type });
+    files.push({ id, name: it.name, size: it.b.length, type: it.type, stored: path.join(UPLOADS, t.id, id, it.name) });
   }
   return { images, files };
 }
@@ -474,11 +482,32 @@ async function pushState(cwd) {
 
 // ---------- approvals: Claude's permission prompts, answered from the phone ----------
 const approvals = new Map(); // id -> { t, done(allow, status) }
-async function askApproval(req, res) {
+function fromOurTurn(req) { // only mcp.mjs inside one of our own turns has the token
   const ip = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
   const tok = Buffer.from(String(req.headers['x-hub-token'] ?? ''));
-  if ((ip !== '127.0.0.1' && ip !== '::1') || tok.length !== APPROVAL_TOKEN.length || !crypto.timingSafeEqual(tok, Buffer.from(APPROVAL_TOKEN)))
-    return json(res, 403, { error: 'Not a hub turn.' });
+  return (ip === '127.0.0.1' || ip === '::1') && tok.length === APPROVAL_TOKEN.length && crypto.timingSafeEqual(tok, Buffer.from(APPROVAL_TOKEN));
+}
+// attach_file: the agent puts a file into the chat. A copy is kept with the thread, so it still opens after the original moves.
+async function attachFile(req, res) {
+  if (!fromOurTurn(req)) return json(res, 403, { error: 'Not a hub turn.' });
+  const p = await body(req);
+  const t = threads.get(p.thread), turn = t?.turns.find(x => x.id === p.turn);
+  if (!t || turn?.status !== 'running') return json(res, 200, { error: 'that turn is no longer running' });
+  const src = path.resolve(str(p.path, 4000) ?? '');
+  const st = await fsp.stat(src).catch(() => null);
+  if (!st) return json(res, 200, { error: `there's no file at ${src}` });
+  if (!st.isFile()) return json(res, 200, { error: `${src} is a folder; attach files one at a time` });
+  if (SECRET_FILE.test(src)) return json(res, 200, { error: 'it looks like a secret (keys, tokens, .env), so it is not sent to the phone' });
+  if (st.size > 50_000_000) return json(res, 200, { error: 'it is over 50 MB; tell the user its path instead' });
+  const id = crypto.randomUUID(), name = fileName(path.basename(src)), stored = path.join(UPLOADS, t.id, id, name);
+  await fsp.mkdir(path.dirname(stored), { recursive: true });
+  await fsp.copyFile(src, stored);
+  addItem(t, turn, { kind: 'file', id, name, size: st.size, src, stored, caption: str(p.caption, 300)?.trim() || undefined,
+    image: !!VIEW_MIME[path.extname(name).slice(1).toLowerCase()]?.startsWith('image/') });
+  return json(res, 200, { name, size: st.size });
+}
+async function askApproval(req, res) {
+  if (!fromOurTurn(req)) return json(res, 403, { error: 'Not a hub turn.' });
   const p = await body(req);
   const t = threads.get(p.thread), turn = t?.turns.find(x => x.id === p.turn);
   if (!t || turn?.status !== 'running') return json(res, 200, { allow: false, message: 'That turn is no longer running.' });
@@ -780,6 +809,7 @@ async function serveStatic(req, res, pathname) {
 const server = http.createServer(async (req, res) => {
   try {
     if (req.url === '/api/approvals' && req.method === 'POST') return await askApproval(req, res); // our own turns, by token
+    if (req.url === '/api/attach' && req.method === 'POST') return await attachFile(req, res);
     if (!(await authorized(req))) return json(res, 403, { error: 'Only the tailnet owner can use this hub.' });
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       // CSRF: another site open on the phone could otherwise post a text/plain form that parses as JSON
