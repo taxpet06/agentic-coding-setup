@@ -193,7 +193,8 @@ async function device(id, params) {
   const seg = h('div', { class: 'seg', role: 'tablist' }, ['threads', 'projects', 'accounts'].map(t =>
     h('button', { role: 'tab', 'aria-selected': String(t === tab), 'data-t': t, onclick: () => setTab(t) }, t[0].toUpperCase() + t.slice(1))));
   const plus = navIcon('plus', 'New thread', () => openComposer());
-  mount(h('main', { class: 'screen' }, bar({ back: { href: '#/', label: 'Hub' }, mid: id, end: [plus] }), h('h1', { class: 'title' }, id), sub, composerSlot, seg, content));
+  const filesBtn = h('a', { class: 'navbtn', href: `#/d/${encodeURIComponent(id)}/files`, 'aria-label': `Files on ${id}`, title: 'Files' }, icon('folder'));
+  mount(h('main', { class: 'screen' }, bar({ back: { href: '#/', label: 'Hub' }, mid: id, end: [filesBtn, plus] }), h('h1', { class: 'title' }, id), sub, composerSlot, seg, content));
 
   function setTab(t) {
     tab = t; try { sessionStorage.setItem(tabKey, t); } catch {}
@@ -730,13 +731,16 @@ function thread(id, tid) {
 
 const size = b => b == null ? '' : b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
 
-// ---------- new project: browse the machine's disk, pick or make a folder, set it up ----------
-function newProject(id, params) {
+// ---------- folder browser: pick a folder for a new project, or explore files (read-only) ----------
+function newProject(id, params) { return browse(id, params, 'project'); }
+function browse(id, params, mode) {
+  const files = mode === 'files';
   const key = `hub.browse.${id}`;
   let cur = params.get('path') || (() => { try { return localStorage.getItem(key); } catch { return null; } })() || '', listing = null, hidden = false, busy = false;
   const crumbs = h('nav', { class: 'crumbs', 'aria-label': 'Folder path' });
   const list = h('div', {}, h('div', { class: 'skel' }), h('div', { class: 'skel' }));
-  const sub = h('p', { class: 'subtitle' }, `On ${id}. Use a folder as it is, or make a new one inside it.`);
+  const sub = h('p', { class: 'subtitle' }, files ? `On ${id}. Read-only: open any file to view it.` : `On ${id}. Use a folder as it is, or make a new one inside it.`);
+  const filter = h('input', { type: 'search', placeholder: 'Filter this folder', 'aria-label': 'Filter this folder', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', oninput: () => paint() });
   const mkRow = h('form', { class: 'mkdir', hidden: true, onsubmit: async e => {
     e.preventDefault();
     const name = mkName.value.trim(); if (!name) return mkName.focus();
@@ -747,23 +751,24 @@ function newProject(id, params) {
   mkRow.append(icon('folder', 'sm'), mkName, h('button', { class: 'btn sm', type: 'submit' }, 'Create'), h('button', { class: 'qb', type: 'button', 'aria-label': 'Cancel', onclick: () => { mkRow.hidden = true; } }, icon('x', 'sm')));
   const tools = h('div', { class: 'fs-tools' },
     h('button', { class: 'btn quiet sm', type: 'button', onclick: () => go(listing?.home ?? '') }, 'Home'),
-    h('button', { class: 'btn quiet sm', type: 'button', onclick: () => { mkRow.hidden = false; mkName.focus(); } }, icon('plus', 'sm'), 'New folder'),
-    h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: e => { hidden = e.target.checked; go(cur); } }), 'Hidden folders'));
-  // the action bar at the bottom: what happens to the folder you're in
+    files ? null : h('button', { class: 'btn quiet sm', type: 'button', onclick: () => { mkRow.hidden = false; mkName.focus(); } }, icon('plus', 'sm'), 'New folder'),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: e => { hidden = e.target.checked; go(cur); } }), files ? 'Hidden files' : 'Hidden folders'));
+  // the action bar at the bottom: what happens to the folder you're in (projects only)
   const where = h('div', { class: 'here' });
   const github = h('input', { type: 'checkbox', checked: true });
   const ghRow = h('label', { class: 'check' }, github, 'Private GitHub repo');
   const start = h('button', { class: 'btn', type: 'button', onclick: () => setup() }, 'Start project here');
-  const bar2 = h('div', { class: 'composer fs-bar' }, h('div', { class: 'wrap' }, where, h('div', { class: 'fs-actions' }, ghRow, start)));
-  mount(h('main', { class: 'screen has-composer' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}?tab=projects`, label: id }, mid: 'New project' }),
-    h('h1', { class: 'title' }, 'Pick a folder'), sub, crumbs, tools, mkRow, list), bar2);
-  const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${bar2.offsetHeight}px`));
-  ro.observe(bar2); onCleanup(() => ro.disconnect());
+  const bar2 = files ? null : h('div', { class: 'composer fs-bar' }, h('div', { class: 'wrap' }, where, h('div', { class: 'fs-actions' }, ghRow, start)));
+  mount(h('main', { class: `screen${files ? '' : ' has-composer'}` }, bar({ back: { href: `#/d/${encodeURIComponent(id)}${files ? '' : '?tab=projects'}`, label: id }, mid: files ? 'Files' : 'New project' }),
+    h('h1', { class: 'title' }, files ? 'Files' : 'Pick a folder'), sub, crumbs, tools, files ? h('div', { class: 'fs-filter' }, filter) : mkRow, list), ...(bar2 ? [bar2] : []));
+  if (bar2) { const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${bar2.offsetHeight}px`)); ro.observe(bar2); onCleanup(() => ro.disconnect()); }
 
   async function go(p) {
     try {
-      listing = await api(`${dev(id)}fs?path=${encodeURIComponent(p)}${hidden ? '&hidden=1' : ''}`);
+      listing = await api(`${dev(id)}fs?path=${encodeURIComponent(p)}${hidden ? '&hidden=1' : ''}${files ? '&files=1' : ''}`);
       cur = listing.path; try { localStorage.setItem(key, cur); } catch {}
+      filter.value = '';
+      if (files) history.replaceState(null, '', `#/d/${encodeURIComponent(id)}/files?path=${encodeURIComponent(cur)}`); // back from a file returns here
       paint();
     } catch (e) { toast(e.message); if (!listing) list.replaceChildren(h('div', { class: 'error' }, e.message)); }
   }
@@ -772,11 +777,16 @@ function newProject(id, params) {
     crumbs.replaceChildren(...listing.crumbs.flatMap((c, i) => [i ? h('span', { class: 'sep', 'aria-hidden': 'true' }, '/') : null,
       i === listing.crumbs.length - 1 ? h('span', { class: 'cur', 'aria-current': 'location' }, c.name) : h('button', { type: 'button', onclick: () => go(c.path) }, c.name)]).filter(Boolean));
     requestAnimationFrame(() => { crumbs.scrollLeft = crumbs.scrollWidth; });
-    const rows = listing.entries.map(e => h('button', { class: 'row', type: 'button', onclick: () => go(e.path) },
+    const f = filter.value.trim().toLowerCase(), match = n => !f || n.toLowerCase().includes(f);
+    const rows = listing.entries.filter(e => match(e.name)).map(e => h('button', { class: 'row', type: 'button', onclick: () => go(e.path) },
       icon(e.project ? 'graph' : 'folder', 'sm'), h('div', { class: 'body' }, h('div', { class: 'name' }, e.name)),
       e.project ? h('span', { class: 'tag' }, 'project') : e.git ? h('span', { class: 'tag' }, 'git') : null, icon('chev', 'chev')));
-    list.replaceChildren(listing.parent ? h('div', { class: 'group up' }, h('button', { class: 'row', type: 'button', onclick: () => go(listing.parent) }, icon('back', 'sm'), h('div', { class: 'body' }, h('div', { class: 'name' }, 'Up one level')))) : '',
-      rows.length ? h('div', { class: 'group' }, rows) : h('div', { class: 'empty' }, h('p', {}, listing.files ? `No folders here, ${listing.files} ${listing.files === 1 ? 'file' : 'files'}.` : 'This folder is empty.')));
+    const frows = (listing.fileList ?? []).filter(x => match(x.name)).map(x => h('a', { class: 'row file', href: `#/d/${encodeURIComponent(id)}/file?path=${encodeURIComponent(x.path)}` },
+      icon('file', 'sm'), h('div', { class: 'body' }, h('div', { class: 'name' }, x.name), h('div', { class: 'meta num' }, [size(x.size), x.mtime ? ago(x.mtime) : null].filter(Boolean).join(' · ')))));
+    const all = [...rows, ...frows];
+    list.replaceChildren(...[listing.parent ? h('div', { class: 'group up' }, h('button', { class: 'row', type: 'button', onclick: () => go(listing.parent) }, icon('back', 'sm'), h('div', { class: 'body' }, h('div', { class: 'name' }, 'Up one level')))) : null,
+      all.length ? h('div', { class: 'group' }, all) : h('div', { class: 'empty' }, h('p', {}, f ? `Nothing here matches “${filter.value}”.` : files ? 'This folder is empty.' : listing.files ? `No folders here, ${listing.files} ${listing.files === 1 ? 'file' : 'files'}.` : 'This folder is empty.'))].filter(Boolean));
+    if (files) return;
     const drives = listing.path === 'drives';
     // long paths lose their start, not their end: rtl box, with the path itself isolated so its slashes stay put
     where.replaceChildren(...[icon(listing.project ? 'graph' : 'folder', 'sm'), h('span', { class: 'p' }, h('bdi', {}, drives ? 'Pick a drive' : listing.path)),
@@ -796,6 +806,85 @@ function newProject(id, params) {
     } catch (e) { toast(e.message); busy = false; paint(); start.disabled = false; }
   }
   go(cur);
+}
+
+// ---------- file viewer (read-only for now; editing will add a Save to this screen) ----------
+function csvRows(text, sep) { // quoted fields, doubled quotes, newlines inside quotes
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; continue; }
+    if (c === '"') q = true; else if (c === sep) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; if (rows.length > 500) break; }
+    else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+function fileView(id, params) {
+  const p = params.get('path') ?? '';
+  const raw = (extra = '') => `/api/${dev(id)}fs/raw?path=${encodeURIComponent(p)}${extra}`;
+  const body = h('div', { class: 'viewer' }, h('div', { class: 'skel' }));
+  const sub = h('p', { class: 'subtitle fpath' }, h('bdi', {}, p));
+  const back = `#/d/${encodeURIComponent(id)}/files?path=${encodeURIComponent(p.replace(/[\\/][^\\/]*$/, '') || '/')}`;
+  const wrapBtn = h('button', { class: 'btn quiet sm', type: 'button', hidden: true, 'aria-pressed': 'false', onclick: () => { const on = body.classList.toggle('wrap'); wrapBtn.setAttribute('aria-pressed', String(on)); } }, 'Wrap lines');
+  const srcBtn = h('button', { class: 'btn quiet sm', type: 'button', hidden: true, 'aria-pressed': 'false' }, 'Source');
+  const acts = h('div', { class: 'composer fs-bar' }, h('div', { class: 'wrap' }, h('div', { class: 'file-acts' },
+    h('a', { class: 'btn quiet sm', href: raw('&download=1'), download: '' }, 'Download'),
+    navigator.share ? h('button', { class: 'btn quiet sm', type: 'button', onclick: () => shareFile() }, 'Share') : null,
+    h('button', { class: 'btn quiet sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(p); toast('Path copied'); } catch { toast('Couldn’t copy'); } } }, 'Copy path'),
+    h('span', { class: 'grow' }),
+    h('button', { class: 'btn sm', type: 'button', onclick: () => askAgent() }, 'Ask the agent'))));
+  const name = p.split(/[\\/]/).pop();
+  mount(h('main', { class: 'screen has-composer' }, bar({ back: { href: back, label: 'Files' }, mid: name }), h('h1', { class: 'title clamp file-title' }, name), sub,
+    h('div', { class: 'fs-tools' }, wrapBtn, srcBtn, h('span', { class: 'meta num', id: 'fmeta' })), body), acts);
+  const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${acts.offsetHeight}px`)); ro.observe(acts); onCleanup(() => ro.disconnect());
+
+  async function shareFile() {
+    try {
+      const blob = await (await fetch(raw('&download=1'))).blob();
+      const file = new File([blob], name, { type: blob.type });
+      if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: name }); else toast('This browser can’t share files');
+    } catch (e) { if (e.name !== 'AbortError') toast(e.message); }
+  }
+  async function askAgent() { // a new thread in the project that holds this file, with its path already typed
+    const projects = await api(`${dev(id)}projects`).catch(() => []);
+    const own = projects.filter(x => p.startsWith(x.path + (x.path.includes('\\') ? '\\' : '/'))).sort((a, b) => b.path.length - a.path.length)[0];
+    saved.set(`${id}/new`, `About \`${p}\`: `);
+    location.hash = `#/d/${encodeURIComponent(id)}?new=${encodeURIComponent(own?.name ?? '')}`;
+  }
+  async function load(reveal = false) {
+    let f;
+    try { f = await api(`${dev(id)}fs/read?path=${encodeURIComponent(p)}${reveal ? '&reveal=1' : ''}`); }
+    catch (e) { return body.replaceChildren(h('div', { class: 'error' }, e.message)); }
+    document.getElementById('fmeta').textContent = [size(f.size), f.mtime ? `changed ${ago(f.mtime)}${ago(f.mtime) === 'now' ? '' : ' ago'}` : null].filter(Boolean).join(' · ');
+    if (f.kind === 'secret') return body.replaceChildren(h('div', { class: 'note-card' }, icon('shield', 'sm'),
+      h('div', {}, h('b', {}, 'This looks like a secret'), h('p', {}, 'Keys, tokens and .env files stay hidden until you ask. Anyone looking at your screen will see it.')),
+      h('button', { class: 'btn sm', type: 'button', onclick: () => load(true) }, 'Reveal')));
+    if (f.kind === 'image') return body.replaceChildren(h('button', { class: 'img-view', type: 'button', 'aria-label': 'Toggle actual size', onclick: e => e.currentTarget.classList.toggle('actual') }, h('img', { src: raw(reveal ? '&reveal=1' : ''), alt: f.name })));
+    if (f.kind === 'pdf') return body.replaceChildren(h('iframe', { class: 'pdf-view', src: raw(), title: f.name }));
+    if (f.kind === 'binary') return body.replaceChildren(h('div', { class: 'note-card' }, icon('file', 'sm'), h('div', {}, h('b', {}, 'No preview for this file'), h('p', {}, `${f.ext ? `.${f.ext} file, ` : ''}${size(f.size)}. Download it to open it in another app.`))));
+    const code = () => {
+      const lines = f.text.split('\n'); if (lines.at(-1) === '') lines.pop();
+      return h('pre', { class: 'code-view', style: { '--gw': `${String(lines.length).length + 1}ch` } }, h('code', {}, lines.map(l => h('span', {}, l || '​'))));
+    };
+    const more = f.truncated ? h('p', { class: 'note' }, `Showing the first ${size(1_000_000)} of ${size(f.size)}. Download for the rest.`) : null;
+    wrapBtn.hidden = false;
+    if (f.kind === 'markdown' || f.kind === 'csv') {
+      srcBtn.hidden = false;
+      const pretty = () => f.kind === 'markdown' ? prose(f.text) : (() => {
+        const rows = csvRows(f.text, f.ext === 'tsv' ? '\t' : ',');
+        return h('div', { class: 'prose' }, h('div', { class: 'tbl' }, h('table', {}, h('thead', {}, h('tr', {}, (rows[0] ?? []).map(c => h('th', {}, c)))),
+          h('tbody', {}, rows.slice(1, 500).map(r => h('tr', {}, r.map(c => h('td', {}, c))))))), rows.length > 500 ? h('p', { class: 'note' }, 'First 500 rows.') : null);
+      })();
+      let src = false;
+      const show = () => { body.replaceChildren(...[src ? code() : pretty(), more].filter(Boolean)); srcBtn.setAttribute('aria-pressed', String(src)); wrapBtn.hidden = !src; };
+      srcBtn.onclick = () => { src = !src; show(); };
+      return show();
+    }
+    body.replaceChildren(...[code(), more].filter(Boolean));
+  }
+  load();
 }
 
 // ---------- desktop: machines and threads in a sidebar beside whichever screen is open ----------
@@ -822,6 +911,7 @@ async function paintSide(fetch = true) {
             h('span', { class: `dot${info?.running ? ' run' : d.hub ? ' on' : ''}` }), h('span', { class: 'n' }, d.id),
             h('span', { class: 'm num' }, d.hub ? (info?.running ? `${info.running} running` : '') : 'offline')),
           open && d.hub && info ? meters(info) : null,
+          open && d.hub ? h('a', { class: `side-link${at.tid === 'files' || at.tid === 'file' ? ' on' : ''}`, href: `#/d/${encodeURIComponent(d.id)}/files` }, icon('folder', 'sm'), 'Files') : null,
           open ? h('div', { class: 'side-threads' }, (sideThreads[d.id] ?? []).length
             ? sideThreads[d.id].map(t => h('a', { class: `side-t${t.id === at.tid ? ' on' : ''}`, href: `#/d/${encodeURIComponent(d.id)}/t/${t.id}`, 'aria-current': t.id === at.tid ? 'page' : null },
                 h('span', { class: `dot ${t.waiting ? 'ask' : t.status === 'running' ? 'run' : t.lastStatus === 'failed' ? 'bad' : ''}`, style: t.waiting || t.status === 'running' || t.lastStatus === 'failed' ? {} : { background: `var(--${t.provider ?? 'text-3'})` } }),
@@ -848,6 +938,8 @@ function route() {
   paintSide(!devicesCache || !sideThreads[at.dev]);
   if (parts[0] === 'd' && parts[1] && parts[2] === 't' && parts[3]) return thread(parts[1], parts[3]);
   if (parts[0] === 'd' && parts[1] && parts[2] === 'new-project') return newProject(parts[1], params);
+  if (parts[0] === 'd' && parts[1] && parts[2] === 'files') return browse(parts[1], params, 'files');
+  if (parts[0] === 'd' && parts[1] && parts[2] === 'file') return fileView(parts[1], params);
   if (parts[0] === 'd' && parts[1]) return device(parts[1], params);
   return home();
 }

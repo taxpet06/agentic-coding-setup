@@ -27,6 +27,10 @@ const TURN_TIMEOUT = Number(process.env.HUB_TURN_TIMEOUT_MIN || 120) * 60_000;
 const VERSION = 1;
 const UPLOADS = path.join(STATE, 'uploads');
 const APPROVAL_TOKEN = crypto.randomBytes(24).toString('hex'); // lets approve.mjs, spawned by our own Claude turns, reach /api/approvals
+// file explorer: what can be shown in the app, and what counts as a secret (needs a deliberate Reveal)
+const VIEW_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml', pdf: 'application/pdf' };
+const SECRET_FILE = /([\\/]\.ssh[\\/])|([\\/](\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)[^\\/]*|credentials\.json|\.credentials\.json|auth\.json|\.netrc|\.npmrc|\.pypirc)$)/i;
+const TEXT_CAP = 1_000_000;
 const IMG = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 const HUB_CLI = path.join(import.meta.dirname, 'cli.mjs');
 widenPath(); // systemd and Windows logon tasks start us with a bare PATH
@@ -591,7 +595,36 @@ async function local(req, res, parts) {
     return json(res, 200, { ok: true });
   }
   // ---- folder browser (the whole disk, folders only) and new projects ----
-  if (a === 'fs' && m === 'GET') {
+  // ---- file explorer (read-only): one file's contents, and its raw bytes for images, PDFs and downloads ----
+  if (a === 'fs' && (b === 'read' || b === 'raw') && m === 'GET') {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const f = path.resolve(str(q.get('path'), 4000) ?? '');
+    let st; try { st = await fsp.stat(f); } catch (e) { throw new HttpError(404, `Can't open ${f}: ${e.code}`); }
+    if (!st.isFile()) throw new HttpError(400, `${f} is not a file`);
+    const ext = path.extname(f).slice(1).toLowerCase(), secret = SECRET_FILE.test(f) && q.get('reveal') !== '1';
+    if (b === 'raw') {
+      if (secret) throw new HttpError(403, 'This looks like a secret. Reveal it first.');
+      const mime = VIEW_MIME[ext];
+      // never let a file from the disk run on the app's origin: no scripts, nothing it can reach (PDF viewers need their own scripts)
+      res.writeHead(200, { 'content-type': mime ?? 'application/octet-stream', 'content-length': st.size, 'x-content-type-options': 'nosniff', 'cache-control': 'private, no-cache',
+        'content-security-policy': `sandbox${mime === 'application/pdf' ? ' allow-scripts' : ''}; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'`,
+        'content-disposition': `${mime && q.get('download') !== '1' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(path.basename(f))}` });
+      return fs.createReadStream(f).on('error', () => res.destroy()).pipe(res);
+    }
+    const info = { path: f, name: path.basename(f), dir: path.dirname(f), size: st.size, mtime: st.mtimeMs, ext, secret };
+    if (VIEW_MIME[ext]?.startsWith('image/')) return json(res, 200, { ...info, kind: 'image' });
+    if (ext === 'pdf') return json(res, 200, { ...info, kind: 'pdf' });
+    if (secret) return json(res, 200, { ...info, kind: 'secret' });
+    const fh = await fsp.open(f, 'r');
+    try {
+      const buf = Buffer.alloc(Math.min(st.size, TEXT_CAP));
+      await fh.read(buf, 0, buf.length, 0);
+      if (buf.subarray(0, 8000).includes(0)) return json(res, 200, { ...info, kind: 'binary' }); // NUL bytes: not text
+      const kind = ext === 'md' || ext === 'markdown' ? 'markdown' : ext === 'csv' || ext === 'tsv' ? 'csv' : 'text';
+      return json(res, 200, { ...info, kind, text: buf.toString('utf8'), truncated: st.size > TEXT_CAP });
+    } finally { await fh.close(); }
+  }
+  if (a === 'fs' && !b && m === 'GET') {
     const q = new URL(req.url, 'http://x').searchParams;
     const want = q.get('path') || HOME, hidden = q.get('hidden') === '1';
     if (WIN && want === 'drives') { // the top of a Windows disk: its drives
@@ -601,6 +634,7 @@ async function local(req, res, parts) {
     const dir = path.resolve(want);
     let ents; try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { throw new HttpError(e.code === 'EACCES' || e.code === 'EPERM' ? 403 : 404, `Can't open ${dir}: ${e.code}`); }
     const known = new Map(projects().map(x => [path.resolve(x.path), x]));
+    const withFiles = q.get('files') === '1';
     const entries = ents.filter(e => (e.isDirectory() || (e.isSymbolicLink() && fs.statSync(path.join(dir, e.name), { throwIfNoEntry: false })?.isDirectory())) && (hidden || !e.name.startsWith('.')) && e.name !== 'node_modules')
       .map(e => { const full = path.join(dir, e.name); return { name: e.name, path: full, project: known.get(full)?.name ?? null, git: fs.existsSync(path.join(full, '.git')) }; })
       .sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: 'base', numeric: true }));
@@ -608,7 +642,11 @@ async function local(req, res, parts) {
     for (let d = dir; ; d = path.dirname(d)) { crumbs.unshift({ name: d === root ? (WIN ? root.slice(0, 2) : '/') : path.basename(d), path: d }); if (d === root) break; }
     if (WIN) crumbs.unshift({ name: 'This PC', path: 'drives' });
     return json(res, 200, { path: dir, home: HOME, parent: dir === root ? (WIN ? 'drives' : null) : path.dirname(dir), crumbs, entries,
-      project: known.get(dir)?.name ?? null, git: fs.existsSync(path.join(dir, '.git')), files: ents.filter(e => e.isFile()).length });
+      project: known.get(dir)?.name ?? null, git: fs.existsSync(path.join(dir, '.git')), files: ents.filter(e => e.isFile()).length,
+      fileList: withFiles ? (await Promise.all(ents.filter(e => e.isFile() && (hidden || !e.name.startsWith('.'))).map(async e => {
+        const st = await fsp.stat(path.join(dir, e.name)).catch(() => null);
+        return { name: e.name, path: path.join(dir, e.name), size: st?.size ?? null, mtime: st?.mtimeMs ?? null };
+      }))).sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: 'base', numeric: true })) : undefined });
   }
   if (a === 'fs' && b === 'mkdir' && m === 'POST') {
     const p = await body(req);

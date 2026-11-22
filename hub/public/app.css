@@ -525,7 +525,7 @@ body.wide .msg-user { max-width: 72%; }
 @media (hover: hover) { .side-dev-row:hover, .side-t:not(.on):hover { background: var(--press); } }
 
 /* desktop thread: bar and band span the pane, the conversation keeps a reading column under the composer */
-body.wide .bar a.navbtn[aria-label^="Back"] { visibility: hidden; }
+body.wide .screen.thread .bar a.navbtn[aria-label^="Back"] { visibility: hidden; }
 body.wide .screen.thread { max-width: none; }
 body.wide .screen.thread .turns { max-width: 760px; margin: 0 auto; }
 body.wide .screen.thread .band { justify-content: center; }
@@ -575,3 +575,33 @@ body.wide .bar.scrolled:not(.always) { box-shadow: 0 0 0 100vmax var(--bg), 0 1p
 .thumb.file { display: flex; align-items: center; }
 .thumb.file .fchip { height: 60px; max-width: 200px; }
 @media (hover: hover) { a.fchip:hover { background: var(--press); } }
+
+/* ---------- file explorer ---------- */
+.fs-filter { margin-bottom: 10px; }
+.row.file .name { font-weight: 500; }
+.side-link { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 0 8px; margin: -2px 0 4px; border-radius: 8px; color: var(--text-2); text-decoration: none; font-size: 14px; }
+.side-link.on { background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--text); font-weight: 600; }
+@media (hover: hover) { .side-link:not(.on):hover { background: var(--press); } }
+.file-title { font-size: 26px; }
+.fpath { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; margin-bottom: 12px; }
+.fs-tools .meta { color: var(--text-3); font-size: 13px; margin-left: auto; }
+.btn[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, var(--panel-2)); color: var(--text); }
+/* code: line numbers from a counter, so wrapping keeps them right */
+.code-view { margin: 0 -16px; padding: 10px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; background: var(--code-bg); overflow-x: auto; counter-reset: ln; tab-size: 4; }
+.code-view code { display: block; min-width: max-content; }
+.code-view span { display: block; padding: 0 16px 0 calc(var(--gw) + 26px); position: relative; white-space: pre; }
+.code-view span::before { counter-increment: ln; content: counter(ln); position: absolute; left: 12px; width: var(--gw); text-align: right; color: var(--text-3); user-select: none; }
+.viewer.wrap .code-view code { min-width: 0; }
+.viewer.wrap .code-view span { white-space: pre-wrap; overflow-wrap: anywhere; }
+body.wide .code-view { margin: 0; border-radius: 12px; }
+.img-view { display: block; width: 100%; padding: 0; border: 0; background: var(--panel); border-radius: 12px; overflow: auto; cursor: zoom-in; }
+.img-view img { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; object-fit: contain; }
+.img-view.actual { cursor: zoom-out; }
+.img-view.actual img { max-width: none; max-height: none; }
+.pdf-view { width: 100%; height: calc(100dvh - var(--composer-h, 120px) - 200px); min-height: 420px; border: 0; border-radius: 12px; background: var(--panel); }
+.note-card { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 14px; background: var(--panel); border-radius: var(--r-row); }
+.note-card p { margin: 4px 0 0; font-size: 14px; color: var(--text-2); }
+.note-card svg.i { color: var(--warn); margin-top: 2px; }
+.file-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.file-acts .grow { flex: 1; }
+.file-acts a.btn { text-decoration: none; }
