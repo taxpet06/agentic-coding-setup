@@ -54,6 +54,7 @@ dell-linux: hub-agent (hub/server.mjs, :7787, loopback + tailnet IP only)
 - **Edit and Retry**: Edit on a sent message, or Retry on the last reply, drops that message and everything after it (kept in `threads/archive/<id>.rewound.jsonl`) and sends it again in a fresh session that gets a recap of the earlier turns. Files the agent already changed stay changed.
 - **Change summary**: each turn ends with the files it changed in its repo (`git diff --numstat` against HEAD at turn start, plus new files), and whether `hub push` got them to the remote: Pushed `<sha>`, Not pushed, or Local only (no upstream).
 - **Skill routing**: a global `UserPromptSubmit` hook tells every Claude session (terminal, both accounts, the app) to load `stack-router` first. Codex turns get the same instruction prepended. The skills each turn loaded show as labels under the agent's name.
+- **Updates**: the hub restarts itself when its own code changes on disk (an edit, or the hooks' `git pull`), once no turn or push is running, so a hub never keeps starting turns against files that moved. `hub/approve.mjs` stays as a stub of `mcp.mjs` for hubs still on older code.
 - **Unattended by default**: new threads use `--permission-mode auto` (Claude) and `workspace-write` (Codex). Set `HUB_PERMISSION_MODE` in the unit to change the default.
 
 Verified on dell-linux (2026-11-17), all with real CLIs except where noted:

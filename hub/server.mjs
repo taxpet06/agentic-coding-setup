@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import crypto from 'node:crypto';
 import webpush from 'web-push';
 import * as lib from './lib.mjs';
-import { WIN, command, widenPath, childOpts, killTree, alive } from './platform.mjs';
+import { WIN, command, widenPath, childOpts, killTree, alive, background } from './platform.mjs';
 import { prepareProfile } from './claude-profile.mjs';
 
 const run = promisify(execFile);
@@ -193,6 +193,7 @@ function projects() {
 
 // ---------- running a turn ----------
 const running = new Map(); // threadId -> { child, stopped }
+let pushing = 0; // hub push runs after a turn; a self-restart waits for it (systemd would kill it mid-rebase)
 
 function claudeResume(t, profile, cwd) {
   const s = t.sessions.claude;
@@ -441,7 +442,9 @@ function startTurn(t, text, force, images = [], files = []) {
       if (card) addItem(t, turn, card);
       setTurn(t, turn); saveThread(t, true);
       // commit + push the repo (own repos only), then say on the card whether it made it
+      pushing++;
       const pushed = new Promise(r => { const c = spawn(process.execPath, [HUB_CLI, 'push', where], { detached: true, windowsHide: true, stdio: 'ignore' }); c.on('close', r); c.on('error', r); c.unref(); });
+      pushed.finally(() => pushing--);
       if (card) pushed.then(() => pushState(where)).then(st => { Object.assign(card, st); patchItem(t, turn, card); }).catch(() => {});
       const last = turn.items.filter(i => i.kind === 'text' || i.kind === 'note').at(-1)?.text ?? '';
       const proj = (t.project?.name ?? 'hub').split('/').pop();
@@ -838,11 +841,15 @@ server.requestTimeout = 0; // event streams
 
 // Bind loopback (for `tailscale serve`) and the tailnet address (for peer hubs). Never all interfaces.
 const bound = new Set();
+const tries = {};
 function listen(host) {
   if (bound.has(host)) return;
   const s = host === '127.0.0.1' ? server : http.createServer(server.listeners('request')[0]);
   s.requestTimeout = 0;
-  s.on('error', e => { bound.delete(host); log(`listen ${host}:${PORT} failed: ${e.code}`); });
+  s.on('error', e => {
+    bound.delete(host); log(`listen ${host}:${PORT} failed: ${e.code}`);
+    if (e.code === 'EADDRINUSE' && (tries[host] = (tries[host] ?? 0) + 1) < 30) setTimeout(() => listen(host), 1000); // the hub we replace is still letting go
+  });
   s.listen(PORT, host, () => log(`hub agent on http://${host}:${PORT}`));
   bound.add(host);
 }
@@ -853,8 +860,27 @@ for (const ip of me.ips.filter(i => i.includes('.'))) listen(ip);
 await checkProviders();
 setInterval(checkProviders, 10 * 60_000).unref();
 log(`device ${me.id}; accounts ready: ${ready().join(', ') || 'none'}`);
+const flush = () => { for (const t of threads.values()) if (saveTimers.has(t.id)) writeJSON(path.join(THREADS, `${t.id}.json`), t); };
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
   for (const [, job] of running) if (job.child) killTree(job.child);
-  for (const t of threads.values()) if (saveTimers.has(t.id)) writeJSON(path.join(THREADS, `${t.id}.json`), t);
+  flush();
   process.exit(0);
 });
+
+// ---------- self-update ----------
+// When the hub's own code changes on disk (an edit, or the hooks' git pull on any machine), restart onto it as soon
+// as no turn is running, so a hub never keeps starting turns against files that moved. The change has to hold still
+// for one check (10 s), so a pull that is still writing files isn't picked up half-way.
+const CODE = ['server.mjs', 'lib.mjs', 'platform.mjs', 'mcp.mjs', 'claude-profile.mjs', 'cli.mjs', 'package-lock.json'].map(f => path.join(import.meta.dirname, f));
+const codeStamp = () => CODE.map(f => fs.statSync(f, { throwIfNoEntry: false })?.mtimeMs ?? 0).join(',');
+const bornStamp = codeStamp();
+let lastStamp = bornStamp;
+setInterval(() => {
+  const now = codeStamp(), steady = now === lastStamp; lastStamp = now;
+  if (now === bornStamp || !steady || running.size || pushing) return;
+  log('hub code changed on disk; restarting onto it');
+  flush();
+  // systemd restarts us on a non-zero exit (Restart=on-failure); anywhere else, start the new hub ourselves first
+  if (!process.env.INVOCATION_ID) background([path.join(import.meta.dirname, 'server.mjs')], null, { cwd: process.cwd(), env: process.env });
+  setTimeout(() => process.exit(process.env.INVOCATION_ID ? 75 : 0), 300);
+}, 10_000).unref();
