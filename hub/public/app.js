@@ -69,6 +69,7 @@ const clock = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minut
 const dur = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`; };
 
 let devicesCache = null;
+const commandsCache = {}; // device -> promise of its command menu
 const selfId = () => devicesCache?.find(d => d.self)?.id;
 
 // ---------- screen lifecycle ----------
@@ -503,16 +504,48 @@ function thread(id, tid) {
   const stop = h('button', { class: 'round stop', type: 'button', 'aria-label': 'Stop this turn', hidden: true, onclick: stopTurn }, icon('stop'));
   const att = attacher(() => paintSend());
   const attach = h('button', { class: 'attach', type: 'button', 'aria-label': 'Attach images', onclick: att.open }, icon('image'));
+  // commands: "/" (button or typed) opens quick actions plus every skill and command this machine's Claude reported
+  const cmdsEl = h('div', { class: 'cmds', hidden: true, role: 'listbox', 'aria-label': 'Commands' });
+  const cmdBtn = h('button', { class: 'attach', type: 'button', 'aria-label': 'Commands', title: 'Commands', onclick: () => {
+    if (!cmdsEl.hidden) return closeCmds();
+    if (!input.value.trim()) { input.value = '/'; grow(); }
+    paintCmds(true); input.focus();
+  } }, icon('slash'));
+  const sendText = text => api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: set.model.value, effort: set.effort.value, mode: set.mode.value } });
+  const QUICK = [['Compact', '/compact', true], ['Context', '/context', true], ['Usage', '/usage', true], ['Review', '/code-review'], ['Fork thread', null]];
+  function closeCmds() { cmdsEl.hidden = true; if (input.value.trim() === '/') { input.value = ''; grow(); paintSend(); } }
+  async function paintCmds(force) {
+    const m = /^\/(\S*)$/.exec(input.value); // only while the command name is being typed
+    if (!m && !force) return void (cmdsEl.hidden = true);
+    cmdsEl.hidden = false;
+    commandsCache[id] ??= api(`${dev(id)}commands`).catch(() => []);
+    const list = await commandsCache[id], q = (m?.[1] ?? '').toLowerCase();
+    const codex = t?.provider === 'codex';
+    const hits = list.filter(c => c.name.toLowerCase().includes(q) && !(codex && c.kind === 'builtin')).sort((a, b) => b.name.startsWith(q) - a.name.startsWith(q)).slice(0, 60);
+    cmdsEl.replaceChildren(
+      ...(q ? [] : [h('div', { class: 'chips' }, QUICK.map(([label, cmd, claudeOnly]) => h('button', { class: 'chip', type: 'button', disabled: claudeOnly && codex, title: claudeOnly && codex ? 'Claude only' : cmd ?? 'A new thread with this conversation so far',
+        onclick: async () => {
+          closeCmds();
+          try {
+            if (cmd) await sendText(cmd);
+            else { const f = await api(`${dev(id)}threads/${tid}/fork`, { method: 'POST' }); location.hash = `#/d/${encodeURIComponent(id)}/t/${f.id}`; toast('Forked into a new thread'); }
+          } catch (e) { toast(e.message); }
+        } }, label)))]),
+      ...(hits.length ? hits.map(c => h('button', { class: 'cmd', type: 'button', role: 'option', onclick: () => {
+          input.value = `/${c.name} `; grow(); paintSend(); cmdsEl.hidden = true; input.focus();
+        } }, h('span', { class: 'n' }, `/${c.name}`), c.desc ? h('span', { class: 'd' }, c.desc) : null))
+        : [h('p', { class: 'cmd-empty' }, list.length ? `No command matches “/${q}”.` : 'No commands yet.')]));
+  }
   // editing a sent message: sending replaces it and everything after it
   let editing = null;
   const editBar = h('div', { class: 'editing', hidden: true }, icon('edit', 'sm'), h('span', {}, 'Editing. The replies after this message will be replaced.'),
     h('button', { type: 'button', class: 'qb', 'aria-label': 'Cancel editing', onclick: () => endEdit() }, icon('x', 'sm')));
   const dkey = `${id}/${tid}`;
   function startEdit(turn) {
-    editing = turn; editBar.hidden = false; attach.hidden = true; att.clear();
+    editing = turn; editBar.hidden = false; attach.hidden = true; cmdBtn.hidden = true; cmdsEl.hidden = true; att.clear();
     input.value = turn.text; grow(); paintSend(); input.focus();
   }
-  function endEdit() { editing = null; editBar.hidden = true; attach.hidden = false; input.value = saved.get(dkey); grow(); paintSend(); } // back to the draft
+  function endEdit() { editing = null; editBar.hidden = true; attach.hidden = false; cmdBtn.hidden = false; input.value = saved.get(dkey); grow(); paintSend(); } // back to the draft
   const rewind = async (turnId, text) => {
     try { await api(`${dev(id)}threads/${tid}/rewind`, { method: 'POST', body: { turnId, text, model: set.model.value, effort: set.effort.value, mode: set.mode.value } }); return true; }
     catch (e) { toast(e.message); return false; }
@@ -527,14 +560,14 @@ function thread(id, tid) {
     if (editing) { if (text && await rewind(editing.id, text)) endEdit(); }
     else try {
       await api(`${dev(id)}threads/${tid}/messages`, { method: 'POST', body: { text, provider: prov.value || undefined, model: set.model.value, effort: set.effort.value, mode: set.mode.value, images: att.take() } });
-      input.value = ''; saved.set(dkey, ''); grow(); att.clear(); prov.value = ''; paintOpts(); opts.open = false;
+      cmdsEl.hidden = true; input.value = ''; saved.set(dkey, ''); grow(); att.clear(); prov.value = ''; paintOpts(); opts.open = false;
     } catch (err) { toast(err.message); }
     busy = false; send.disabled = false; paintSend();
-  } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, att.strip, att.input, h('div', { class: 'box' }, attach, input, stop, send)));
+  } }, h('div', { class: 'wrap' }, opts, queueEl, editBar, cmdsEl, att.strip, att.input, h('div', { class: 'box' }, attach, cmdBtn, input, stop, send)));
   // one line is exactly button height, so the text and the image/send buttons share a centre line
   const grow = () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, innerHeight * 0.4)}px`; };
-  input.addEventListener('input', () => { if (!editing) saved.set(dkey, input.value); grow(); paintSend(); });
-  input.addEventListener('keydown', e => sendKey(e, form));
+  input.addEventListener('input', () => { if (!editing) { saved.set(dkey, input.value); paintCmds(); } grow(); paintSend(); });
+  input.addEventListener('keydown', e => { if (e.key === 'Escape' && !cmdsEl.hidden) return void closeCmds(); sendKey(e, form); });
   // jump back to the newest message after scrolling up
   const jump = h('button', { class: 'jump', type: 'button', 'aria-label': 'Jump to latest', hidden: true, onclick: () => scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }) }, icon('chev', 'sm'));
   mount(h('main', { class: 'screen has-composer thread' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}?tab=threads`, label: 'Threads' }, mid: h('div', { class: 'tt' }, titleEl, where), end: [archive], always: true }), band, turnsEl), jump, form);

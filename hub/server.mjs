@@ -30,6 +30,26 @@ const APPROVAL_TOKEN = crypto.randomBytes(24).toString('hex'); // lets mcp.mjs, 
 const MCP = path.join(import.meta.dirname, 'mcp.mjs');
 const hubEnv = (t, turn, tools) => ({ HUB_URL: `http://127.0.0.1:${PORT}`, HUB_TOKEN: APPROVAL_TOKEN, HUB_THREAD: t.id, HUB_TURN: turn.id, HUB_TOOLS: tools });
 // what every agent should know about where its user is
+// slash commands: Claude reports the full list at the start of every turn; until it has, the skills folder stands in
+const SKILLS = path.join(HOME, '.claude', 'skills');
+const COMMANDS = path.join(STATE, 'commands.json');
+let cmdCache = (() => { try { return JSON.parse(fs.readFileSync(COMMANDS, 'utf8')); } catch { return null; } })();
+const descs = new Map();
+const hasSkill = n => /^[\w.-]+$/.test(n) && fs.existsSync(path.join(SKILLS, n, 'SKILL.md'));
+function describeSkill(n) {
+  if (!descs.has(n)) { let d = null; try { if (hasSkill(n)) d = lib.skillDescription(fs.readFileSync(path.join(SKILLS, n, 'SKILL.md'), 'utf8')); } catch {} descs.set(n, d); }
+  return descs.get(n);
+}
+function noteCommands(slash, skills) {
+  if (JSON.stringify(cmdCache) === JSON.stringify({ slash, skills })) return;
+  cmdCache = { slash, skills };
+  fs.promises.writeFile(COMMANDS, JSON.stringify(cmdCache)).catch(() => {});
+}
+function commands() {
+  if (cmdCache) return lib.commandMenu(cmdCache.slash, cmdCache.skills, describeSkill);
+  let dirs = []; try { dirs = fs.readdirSync(SKILLS).filter(hasSkill); } catch {}
+  return lib.commandMenu([...Object.keys(lib.BUILTINS), ...dirs], dirs, describeSkill);
+}
 const HUB_NOTE = 'You are running inside the Hub app: the user reads this conversation on their phone or another computer and cannot see this machine\'s disk. When you make or find a file they should look at (a report, chart, screenshot, PDF, CSV, log, or a file you changed), attach it with the hub attach_file tool instead of pasting its contents.';
 // file explorer: what can be shown in the app, and what counts as a secret (needs a deliberate Reveal)
 const VIEW_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml', pdf: 'application/pdf' };
@@ -251,6 +271,7 @@ function runProvider(p, t, turn, prompt, cwd, resumeId, images = []) {
         if (ev.kind === 'session') {
           sessionId = ev.id;
           if (isClaude) t.sessions.claude = { id: ev.id, profile: p, seen: t.sessions.claude?.seen ?? 0 };
+          if (isClaude && Array.isArray(ev.commands)) noteCommands(ev.commands, ev.skills ?? []);
           else t.sessions.codex = { id: ev.id, seen: t.sessions.codex?.seen ?? 0 };
           saveThread(t);
         } else if (ev.kind === 'text') addItem(t, turn, { kind: 'text', text: ev.text });
@@ -301,7 +322,7 @@ async function runTurn(t, turn, force) {
   const claudeText = userTurn.text + (images.length ? `\n\n[Attached ${images.length === 1 ? 'image' : 'images'}: open with the Read tool: ${images.join(', ')}]` : '') + fileNote;
   turn.base ??= await gitHead(cwd);
   baseUntracked.set(turn.id, new Set(turn.base ? await untracked(cwd) : []));
-  const intro = t.rewound ? lib.REWOUND : undefined;
+  const intro = t.rewound ? lib.REWOUND : t.forked ? lib.FORKED : undefined;
   const tried = [];
   let prevLimited = false;
   for (;;) {
@@ -329,9 +350,10 @@ async function runTurn(t, turn, force) {
     const hint = family !== 'codex' ? '' : (cwd === HUB_DIR ? '[You are in the hub repo. Projects on this machine: ~/.claude/hub/projects.tsv; `hub find <word>` looks one up.]\n' : '')
       + '[Before acting on a coding, UI, debugging or prose task, read ~/.claude/skills/stack-router/SKILL.md and follow its routing: each skill it names is at ~/.claude/skills/<name>/SKILL.md.]\n'
       + `[${HUB_NOTE}]\n\n`;
-    const userText = family === 'codex' ? userTurn.text + fileNote : claudeText;
+    const userText = family === 'codex' ? lib.codexCommand(userTurn.text, hasSkill) + fileNote : claudeText;
+    const slash = family !== 'codex' && userTurn.text.startsWith('/'); // a command only runs as the first thing in the prompt
     const imgs = family === 'codex' ? images : [];
-    let res = await runProvider(p, t, turn, hint + carry + userText, cwd, resumeId, imgs);
+    let res = await runProvider(p, t, turn, slash ? userText + (carry ? `\n\n${carry}` : '') : hint + carry + userText, cwd, resumeId, imgs);
     if (res.noSession && resumeId) { // transcript file went missing: start a fresh session with the whole history
       t.sessions[family] = null;
       res = await runProvider(p, t, turn, hint + lib.contextFor(transcript, 0, intro) + userText, cwd, null, imgs);
@@ -346,6 +368,7 @@ async function runTurn(t, turn, force) {
     if (t.sessions[family]) t.sessions[family].seen = t.turns.length; // it has now seen everything through this turn
     turn.status = res.ok ? 'done' : 'failed';
     if (!res.ok) addItem(t, turn, { kind: 'note', tone: 'error', text: res.text });
+    else if (res.text && !turn.items.some(i => i.kind === 'text')) addItem(t, turn, { kind: 'text', text: res.text });
     return;
   }
 }
@@ -433,7 +456,7 @@ function startTurn(t, text, force, images = [], files = []) {
     catch (e) { turn.status = 'failed'; addItem(t, turn, { kind: 'note', tone: 'error', text: `Hub error: ${e.message}` }); log('turn crashed', e); }
     finally {
       running.delete(t.id);
-      turn.endedAt = Date.now(); t.status = 'idle'; delete t.rewound;
+      turn.endedAt = Date.now(); t.status = 'idle'; delete t.rewound; delete t.forked;
       for (const a of approvals.values()) if (a.t === t) a.done(false, 'expired');
       const where = t.project?.path ?? HUB_DIR;
       const ch = await changesSince(where, turn.base, baseUntracked.get(turn.id)).catch(() => null);
@@ -698,6 +721,7 @@ async function local(req, res, parts) {
       return json(res, 201, JSON.parse(out));
     } catch (e) { throw new HttpError(400, (e.stderr || e.message || 'Setup failed').trim().split('\n').at(-1)); }
   }
+  if (a === 'commands' && m === 'GET') return json(res, 200, commands());
   if (a === 'threads' && !b && m === 'GET') return json(res, 200, [...threads.values()].map(summary).sort((x, y) => y.updatedAt - x.updatedAt));
   if (a === 'threads' && !b && m === 'POST') {
     const p = await body(req, 60_000_000);
@@ -769,6 +793,15 @@ async function local(req, res, parts) {
     if (!data) throw new HttpError(404, 'Not found');
     res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`, 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=31536000' });
     return res.end(data);
+  }
+  if (t && c === 'fork' && m === 'POST') { // a new thread with this one's history; its first turn gets a recap
+    const f = { ...structuredClone(t), id: crypto.randomUUID(), title: `${t.title} (fork)`.slice(0, 80), createdAt: Date.now(), updatedAt: Date.now(),
+      status: 'idle', queue: [], sessions: { claude: null, codex: null }, forked: true };
+    delete f.rewound;
+    for (const turn of f.turns) if (turn.status === 'running') turn.status = 'stopped';
+    if (fs.existsSync(path.join(UPLOADS, t.id))) fs.cpSync(path.join(UPLOADS, t.id), path.join(UPLOADS, f.id), { recursive: true });
+    threads.set(f.id, f); saveThread(f, true);
+    return json(res, 201, summary(f));
   }
   if (t && c === 'stop' && m === 'POST') {
     const job = running.get(t.id);

@@ -1,7 +1,7 @@
 // node --test hub/test.mjs : the decisions that must not regress (provider choice, routing, event parsing)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickProvider, matchProject, limitResetFrom, claudeSlug, parseClaude, parseCodex, contextFor } from './lib.mjs';
+import { pickProvider, matchProject, limitResetFrom, claudeSlug, parseClaude, parseCodex, contextFor, commandMenu, skillDescription, codexCommand } from './lib.mjs';
 
 const now = 1_800_000_000_000;
 const all = ['personal', 'school', 'codex'];
@@ -55,7 +55,7 @@ test('claudeSlug matches Claude Code project dirs', () => {
 
 test('parseClaude normalizes stream-json', () => {
   const ev = l => parseClaude(JSON.stringify(l));
-  assert.deepEqual(ev({ type: 'system', subtype: 'init', session_id: 's1' }), [{ kind: 'session', id: 's1' }]);
+  assert.deepEqual(ev({ type: 'system', subtype: 'init', session_id: 's1' }), [{ kind: 'session', id: 's1', commands: undefined, skills: undefined }]);
   assert.deepEqual(ev({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls -la' } }] } }),
     [{ kind: 'text', text: 'hi' }, { kind: 'tool', id: undefined, name: 'Bash', detail: 'ls -la', view: { cmd: 'ls -la', desc: '' } }]);
   assert.equal(ev({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'impeccable' } }] } })[0].detail, 'impeccable', 'skill name feeds the skill labels in the app');
@@ -118,4 +118,19 @@ test('Windows: npm .cmd shims resolve to the JS file they run (so no shell mangl
   assert.equal(parseShim(modern, dir), path.join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js').replace(/\//g, path.sep));
   assert.ok(parseShim(legacy, dir).endsWith('cli.js'));
   assert.equal(parseShim('@echo off\r\nsomething.exe %*', dir), null, 'not an npm shim: fall back to a shell');
+});
+
+test('slash commands: menu, descriptions, Codex rewrite', () => {
+  const init = parseClaude(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', slash_commands: ['compact', 'heapdump', 'impeccable', 'usage'], skills: ['impeccable'] }));
+  assert.deepEqual(init[0].commands, ['compact', 'heapdump', 'impeccable', 'usage']);
+  const menu = commandMenu(init[0].commands, init[0].skills, n => n === 'impeccable' ? 'Design work' : null);
+  assert.deepEqual(menu.map(c => c.name), ['compact', 'usage', 'impeccable'], 'useful built-ins first, internal ones hidden, then skills');
+  assert.equal(menu[2].desc, 'Design work');
+  assert.equal(skillDescription('---\nname: a\ndescription: "Quoted one-liner"\n---\n'), 'Quoted one-liner');
+  assert.equal(skillDescription('---\ndescription: >\n  Folded\n  text\nversion: 1\n---'), 'Folded text');
+  assert.equal(skillDescription('no frontmatter'), null);
+  assert.match(codexCommand('/impeccable polish it', n => n === 'impeccable'), /^Use the impeccable skill: read ~\/.claude\/skills\/impeccable\/SKILL.md[\s\S]*polish it$/);
+  assert.match(codexCommand('/code-review', () => false), /^Review the uncommitted changes/);
+  assert.equal(codexCommand('/compact', () => false), '/compact', 'Claude-only built-ins pass through');
+  assert.equal(codexCommand('fix /etc/hosts', () => true), 'fix /etc/hosts', 'only a leading command is rewritten');
 });

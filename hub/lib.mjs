@@ -103,7 +103,7 @@ export const toolDetail = i => cut(String(i?.command ?? i?.file_path ?? i?.noteb
 export function parseClaude(line) {
   let o; try { o = JSON.parse(line); } catch { return []; }
   switch (o.type) {
-    case 'system': return o.subtype === 'init' ? [{ kind: 'session', id: o.session_id }] : [];
+    case 'system': return o.subtype === 'init' ? [{ kind: 'session', id: o.session_id, commands: o.slash_commands, skills: o.skills }] : [];
     case 'assistant':
       return (o.message?.content ?? []).flatMap(c =>
         c.type === 'text' && c.text ? [{ kind: 'text', text: c.text }]
@@ -157,6 +157,7 @@ export function parseCodex(line) {
 }
 
 const HANDOFF = 'Hub handoff: this conversation continued with another assistant account while you were away. Here is what happened since you last saw it; the working tree already has those changes.';
+export const FORKED = 'Hub: the user forked this conversation into a new thread, so this is a fresh session. Here is the conversation so far; files on disk are as it left them.';
 export const REWOUND = 'Hub: the user edited or retried a message, so this is a fresh session. Here is the conversation before it; files on disk keep any changes made since.';
 // turns: [{ role: 'user'|'assistant', provider?, text }]. The catch-up text for an agent that last saw turns[0..seen).
 export function contextFor(turns, seen, intro = HANDOFF) {
@@ -172,4 +173,41 @@ export function contextFor(turns, seen, intro = HANDOFF) {
   }
   return `[${intro}]\n\n` + lines.join('\n\n') +
     '\n\n[End of handoff. The new request follows.]\n\n';
+}
+
+// ---------- slash commands ----------
+// Claude built-ins worth a tap from a phone; the rest open terminal menus, change settings Hub already owns, or bill extra
+export const BUILTINS = {
+  compact: 'Summarise the conversation so far to free up context',
+  context: 'Show what is filling the context window',
+  usage: 'Show plan usage for this account',
+  init: 'Write a CLAUDE.md for this project',
+  'security-review': 'Review pending changes for security issues',
+  recap: 'Recap what happened in this session',
+  insights: 'Report on your recent Claude Code sessions',
+};
+// the menu: useful built-ins first, then every skill/command Claude reported (or the skills folder before it has)
+export function commandMenu(slash, skills, describe) {
+  const sk = new Set(skills);
+  const builtins = Object.keys(BUILTINS).filter(n => slash.includes(n)).map(name => ({ name, desc: BUILTINS[name], kind: 'builtin' }));
+  const rest = slash.filter(n => sk.has(n) && !(n in BUILTINS)).sort().map(name => ({ name, desc: describe(name) ?? '', kind: 'skill' }));
+  return [...builtins, ...rest];
+}
+// first description line from a SKILL.md frontmatter ("description: …", or a | / > block)
+export function skillDescription(md) {
+  const fm = /^---\n([\s\S]*?)\n---/.exec(md)?.[1] ?? '';
+  const m = /^description:[ \t]*(.*)$/m.exec(fm);
+  if (!m) return null;
+  let d = m[1].trim();
+  if (/^[|>][-+]?$/.test(d)) d = fm.slice(m.index + m[0].length).split('\n').filter(l => /^\s+\S/.test(l)).map(l => l.trim()).join(' ');
+  return cut(d.replace(/^["']|["']$/g, ''), 220) || null;
+}
+// Codex has no slash commands in exec mode: "/name args" becomes "use the name skill" when the skill exists
+export function codexCommand(text, hasSkill) {
+  const m = /^\/([\w:.-]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  if (!m) return text;
+  const [, name, args = ''] = m;
+  if (name === 'code-review') return `Review the uncommitted changes in this repo (git diff against HEAD, plus new files) for correctness bugs. Report findings most severe first, each with file:line and a concrete failure scenario. Don't edit anything.${args ? `\n\n${args}` : ''}`;
+  if (!hasSkill(name)) return text;
+  return `Use the ${name} skill: read ~/.claude/skills/${name}/SKILL.md and follow it.${args ? `\n\n${args}` : ''}`;
 }
