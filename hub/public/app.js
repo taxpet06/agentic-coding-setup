@@ -118,11 +118,11 @@ async function home() {
   const others = h('div');
   const sub = h('p', { class: 'subtitle num' }, 'Looking for machines on your tailnet…');
   const refresh = navIcon('refresh', 'Refresh', () => load(true));
-  mount(h('main', { class: 'screen' }, bar({ mid: 'Hub', end: [refresh] }), h('h1', { class: 'title' }, 'Hub'), sub, list, notifySection(), others));
+  mount(h('main', { class: 'screen' }, bar({ mid: 'Machines', end: [refresh] }), h('h1', { class: 'title' }, 'Machines'), sub, list, notifySection(), others));
   async function load(fresh) {
     try {
       const ds = await api(`devices${fresh ? '?fresh=1' : ''}`);
-      devicesCache = ds;
+      devicesCache = ds; paintNav();
       const hubs = ds.filter(d => d.hub || d.lastInfo).sort((a, b) => b.self - a.self || b.online - a.online || a.id.localeCompare(b.id));
       const running = hubs.reduce((n, d) => n + (d.info?.running ?? 0), 0);
       sub.textContent = `${hubs.filter(d => d.hub).length} of ${hubs.length} ${hubs.length === 1 ? 'machine' : 'machines'} online · ${running} running`;
@@ -189,31 +189,23 @@ async function subscribe() {
 
 // ---------- device ----------
 async function device(id, params) {
-  const tabKey = `hub.tab.${id}`;
-  let tab = params.get('tab') ?? (() => { try { return sessionStorage.getItem(tabKey); } catch { return null; } })() ?? 'threads';
+  const tab = devTab(id, params);
   let info = devicesCache?.find(d => d.id === id)?.info;
   let projects = null, threads = null;
   const sub = h('p', { class: 'subtitle num' }, '');
   const composerSlot = h('div');
   const content = h('div', {}, h('div', { class: 'skel' }), h('div', { class: 'skel' }));
-  const seg = h('div', { class: 'seg', role: 'tablist' }, ['threads', 'projects', 'accounts'].map(t =>
-    h('button', { role: 'tab', 'aria-selected': String(t === tab), 'data-t': t, onclick: () => setTab(t) }, t[0].toUpperCase() + t.slice(1))));
   const plus = navIcon('plus', 'New thread', () => openComposer());
-  const filesBtn = h('a', { class: 'navbtn', href: `#/d/${encodeURIComponent(id)}/files`, 'aria-label': `Files on ${id}`, title: 'Files' }, icon('folder'));
-  mount(h('main', { class: 'screen' }, bar({ back: { href: '#/', label: 'Hub' }, mid: id, end: [filesBtn, plus] }), h('h1', { class: 'title' }, id), sub, composerSlot, seg, content));
+  const label = NAV.find(n => n[0] === tab)[1];
+  mount(h('main', { class: 'screen' }, bar({ mid: label, end: [plus] }), h('h1', { class: 'title' }, label), sub, composerSlot, content));
 
-  function setTab(t) {
-    tab = t; try { sessionStorage.setItem(tabKey, t); } catch {}
-    for (const b of seg.children) b.setAttribute('aria-selected', String(b.dataset.t === t));
-    paint();
-  }
   function openComposer(project, focus = true) {
     composerSlot.replaceChildren(newThreadForm(id, projects ?? [], project, () => { saved.set(`${id}/new`, ''); composerSlot.replaceChildren(); }));
     if (focus) composerSlot.querySelector('textarea')?.focus();
   }
   function paint() {
     if (!info) return;
-    sub.textContent = `${info.os ?? ''} · ${info.running ? `${info.running} running` : 'idle'}${info.remoteControl ? ' · Remote Control on' : ''}`;
+    sub.textContent = `${id} · ${info.os ?? ''} · ${info.running ? `${info.running} running` : 'idle'}${info.remoteControl ? ' · Remote Control on' : ''}`;
     if (tab === 'threads') {
       if (!threads) return;
       content.replaceChildren(threads.length ? h('div', { class: 'group' }, threads.map(t => threadRow(id, t)))
@@ -545,7 +537,7 @@ function thread(id, tid) {
   input.addEventListener('keydown', e => sendKey(e, form));
   // jump back to the newest message after scrolling up
   const jump = h('button', { class: 'jump', type: 'button', 'aria-label': 'Jump to latest', hidden: true, onclick: () => scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }) }, icon('chev', 'sm'));
-  mount(h('main', { class: 'screen has-composer thread' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}`, label: id }, mid: h('div', { class: 'tt' }, titleEl, where), end: [archive], always: true }), band, turnsEl), jump, form);
+  mount(h('main', { class: 'screen has-composer thread' }, bar({ back: { href: `#/d/${encodeURIComponent(id)}?tab=threads`, label: 'Threads' }, mid: h('div', { class: 'tt' }, titleEl, where), end: [archive], always: true }), band, turnsEl), jump, form);
   const onScroll = () => { jump.hidden = nearBottom(); };
   addEventListener('scroll', onScroll, { passive: true }); onCleanup(() => removeEventListener('scroll', onScroll));
   input.value = saved.get(dkey); grow();
@@ -779,7 +771,7 @@ function browse(id, params, mode) {
   const ghRow = h('label', { class: 'check' }, github, 'Private GitHub repo');
   const start = h('button', { class: 'btn', type: 'button', onclick: () => setup() }, 'Start project here');
   const bar2 = files ? null : h('div', { class: 'composer fs-bar' }, h('div', { class: 'wrap' }, where, h('div', { class: 'fs-actions' }, ghRow, start)));
-  mount(h('main', { class: `screen${files ? '' : ' has-composer'}` }, bar({ back: { href: `#/d/${encodeURIComponent(id)}${files ? '' : '?tab=projects'}`, label: id }, mid: files ? 'Files' : 'New project' }),
+  mount(h('main', { class: `screen${files ? '' : ' has-composer'}` }, bar({ back: files ? null : { href: `#/d/${encodeURIComponent(id)}?tab=projects`, label: 'Projects' }, mid: files ? 'Files' : 'New project' }),
     h('h1', { class: 'title' }, files ? 'Files' : 'Pick a folder'), sub, crumbs, tools, files ? h('div', { class: 'fs-filter' }, filter) : mkRow, list), ...(bar2 ? [bar2] : []));
   if (bar2) { const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--composer-h', `${bar2.offsetHeight}px`)); ro.observe(bar2); onCleanup(() => ro.disconnect()); }
 
@@ -927,11 +919,11 @@ async function paintSide(fetch = true) {
       ...hubs.map(d => {
         const info = d.info ?? d.lastInfo, open = d.id === cur;
         return h('section', { class: `side-dev${open ? ' open' : ''}${d.hub ? '' : ' off'}` },
-          h('a', { class: 'side-dev-row', href: `#/d/${encodeURIComponent(d.id)}`, 'aria-current': at.dev === d.id && !at.tid ? 'page' : null },
+          h('a', { class: 'side-dev-row', href: `#/d/${encodeURIComponent(d.id)}` },
             h('span', { class: `dot${info?.running ? ' run' : d.hub ? ' on' : ''}` }), h('span', { class: 'n' }, d.id),
             h('span', { class: 'm num' }, d.hub ? (info?.running ? `${info.running} running` : '') : 'offline')),
           open && d.hub && info ? meters(info) : null,
-          open && d.hub ? h('a', { class: `side-link${at.tid === 'files' || at.tid === 'file' ? ' on' : ''}`, href: `#/d/${encodeURIComponent(d.id)}/files` }, icon('folder', 'sm'), 'Files') : null,
+          open && d.hub ? h('div', { class: 'side-nav' }, NAV.slice(1).map(([k, label, ic]) => h('a', { class: `side-link${navAt === k ? ' on' : ''}`, href: navHref(k, d.id), 'aria-current': navAt === k ? 'page' : null }, icon(ic, 'sm'), label))) : null,
           open ? h('div', { class: 'side-threads' }, (sideThreads[d.id] ?? []).length
             ? sideThreads[d.id].map(t => h('a', { class: `side-t${t.id === at.tid ? ' on' : ''}`, href: `#/d/${encodeURIComponent(d.id)}/t/${t.id}`, 'aria-current': t.id === at.tid ? 'page' : null },
                 h('span', { class: `dot ${t.waiting ? 'ask' : t.status === 'running' ? 'run' : t.lastStatus === 'failed' ? 'bad' : ''}`, style: t.waiting || t.status === 'running' || t.lastStatus === 'failed' ? {} : { background: `var(--${t.provider ?? 'text-3'})` } }),
@@ -946,6 +938,24 @@ setInterval(() => document.visibilityState === 'visible' && wide.matches && pain
 const enterSends = matchMedia('(hover: hover) and (pointer: fine)').matches;
 const sendKey = (e, form) => { if (e.key === 'Enter' && !e.isComposing && (e.metaKey || e.ctrlKey || (enterSends && !e.shiftKey))) { e.preventDefault(); form.requestSubmit(); } };
 
+// ---------- navigation: every section one tap away (tab bar on a phone, the sidebar on desktop) ----------
+const NAV = [['machines', 'Machines', 'machine'], ['threads', 'Threads', 'chat'], ['projects', 'Projects', 'repo'], ['accounts', 'Accounts', 'gauge'], ['files', 'Files', 'folder']];
+const tabsEl = document.getElementById('tabs');
+let navAt = 'machines';
+// the machine the sections point at: the one open, else the last one visited, else this one
+const navDev = () => at.dev ?? (() => { try { return localStorage.getItem('hub.dev'); } catch { return null; } })() ?? selfId();
+const navHref = (k, d) => k === 'machines' || !d ? '#/' : k === 'files' ? `#/d/${encodeURIComponent(d)}/files` : `#/d/${encodeURIComponent(d)}?tab=${k}`;
+function devTab(id, params) {
+  const t = params.get('tab');
+  if (['threads', 'projects', 'accounts'].includes(t)) { try { sessionStorage.setItem(`hub.tab.${id}`, t); } catch {} return t; }
+  try { return sessionStorage.getItem(`hub.tab.${id}`) ?? 'threads'; } catch { return 'threads'; }
+}
+function paintNav(active = navAt) {
+  navAt = active;
+  const d = navDev();
+  tabsEl.replaceChildren(...NAV.map(([k, label, ic]) => h('a', { class: 'tab', href: navHref(k, d), 'aria-current': k === active ? 'page' : null }, icon(ic), h('span', {}, label))));
+}
+
 // ---------- router ----------
 function route() {
   for (const f of cleanups) f();
@@ -955,6 +965,8 @@ function route() {
   const params = new URLSearchParams(query ?? '');
   scrollTo(0, 0);
   at.dev = parts[0] === 'd' ? parts[1] ?? null : null; at.tid = parts[2] === 't' ? parts[3] ?? null : parts[2] ?? null; // a sub-page (new-project) isn't the device page
+  if (at.dev) try { localStorage.setItem('hub.dev', at.dev); } catch {}
+  paintNav(!parts[0] ? 'machines' : parts[2] === 't' ? 'threads' : parts[2] === 'new-project' ? 'projects' : parts[2] === 'files' || parts[2] === 'file' ? 'files' : devTab(parts[1], params));
   paintSide(!devicesCache || !sideThreads[at.dev]);
   if (parts[0] === 'd' && parts[1] && parts[2] === 't' && parts[3]) return thread(parts[1], parts[3]);
   if (parts[0] === 'd' && parts[1] && parts[2] === 'new-project') return newProject(parts[1], params);

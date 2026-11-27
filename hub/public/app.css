@@ -61,8 +61,8 @@ svg.i.sm { width: 16px; height: 16px; stroke-width: 2; }
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---------- shell ---------- */
-.screen { min-height: 100dvh; padding: calc(var(--top) + 8px) 16px calc(var(--bottom) + 32px); max-width: 720px; margin: 0 auto; }
-.screen.has-composer { padding-bottom: calc(var(--composer-h, 120px) + 24px); }
+.screen { min-height: 100dvh; padding: calc(var(--top) + 8px) 16px calc(var(--tabs-h) + var(--bottom) + 32px); max-width: 720px; margin: 0 auto; }
+.screen.has-composer { padding-bottom: calc(var(--composer-h, 120px) + var(--tabs-h) + 24px); }
 .bar {
   position: sticky; top: 0; z-index: 5; margin: calc(-1 * var(--top) - 8px) -16px 0; padding: calc(var(--top) + 6px) 8px 6px;
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; min-height: calc(var(--top) + 50px);
@@ -141,9 +141,6 @@ a.row:active, button.row:active { background: var(--press); }
 .btn.wide { width: 100%; }
 .btn.sm { min-height: 36px; padding: 0 12px; font-size: 15px; }
 
-.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--panel-2); border-radius: 9px; padding: 2px; margin: 20px 0 12px; }
-.seg button { min-height: 34px; border: 0; border-radius: 7px; background: none; font-size: 15px; font-weight: 500; color: var(--text-2); }
-.seg button[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
 
 .field { display: grid; gap: 6px; }
 .field > span { font-size: 13px; color: var(--text-2); padding-left: 2px; }
@@ -336,7 +333,7 @@ details.changes .sum { flex: 1; min-width: 0; font-weight: 600; }
 .note.bad { color: var(--bad); white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; }
 
 .composer {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; padding: 6px 12px calc(var(--bottom) + 8px);
+  position: fixed; left: 0; right: 0; bottom: var(--tabs-h); z-index: 6; padding: 6px 12px var(--composer-pb);
   background: color-mix(in srgb, var(--bg) 90%, transparent); -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px);
   border-top: 1px solid var(--seam);
 }
@@ -389,7 +386,7 @@ details.changes .sum { flex: 1; min-width: 0; font-weight: 600; }
 .skel { background: var(--panel); border-radius: var(--r-row); height: 64px; margin-bottom: 1px; position: relative; overflow: hidden; }
 .skel { animation: breathe 1.6s ease-in-out infinite; }
 .error { background: color-mix(in srgb, var(--bad) 10%, var(--panel)); color: var(--bad); border-radius: var(--r-row); padding: 12px 14px; font-size: 15px; margin: 8px 0; }
-.toast { position: fixed; left: 50%; bottom: calc(var(--bottom) + 96px); transform: translateX(-50%); z-index: 10; background: var(--text); color: var(--bg);
+.toast { position: fixed; left: 50%; bottom: calc(var(--tabs-h) + var(--bottom) + 96px); transform: translateX(-50%); z-index: 10; background: var(--text); color: var(--bg);
   padding: 10px 16px; border-radius: 12px; font-size: 15px; max-width: calc(100vw - 32px); animation: rise 220ms var(--ease); }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 
@@ -420,7 +417,7 @@ details.changes .sum { flex: 1; min-width: 0; font-weight: 600; }
 @keyframes enter-right { from { opacity: 0; transform: translate(10px, 4px) scale(0.98); } }
 
 /* jump back to the newest message */
-.jump { position: fixed; right: 16px; bottom: calc(var(--composer-h, 120px) + 12px); z-index: 6; width: 40px; height: 40px; border-radius: 50%; border: 0;
+.jump { position: fixed; right: 16px; bottom: calc(var(--composer-h, 120px) + var(--tabs-h) + 12px); z-index: 6; width: 40px; height: 40px; border-radius: 50%; border: 0;
   display: grid; place-items: center; background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--seam-strong), 0 6px 18px rgba(0, 0, 0, 0.14);
   transition: transform 140ms var(--ease), opacity 160ms var(--ease); }
 .jump svg.i { transform: rotate(90deg); }
@@ -598,7 +595,6 @@ h2.section { font-size: 15px; font-weight: 600; color: var(--text-2); }
 .tag, .row .tag { background: var(--panel-2); color: var(--text-2); border-radius: 6px; font-weight: 500; }
 .stamp { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; box-shadow: none; padding: 3px 9px;
   background: color-mix(in srgb, currentColor 14%, transparent); }
-.seg button[aria-selected="true"] { background: #3a3a3f; color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
 .btn.quiet { background: var(--panel-2); color: var(--text); }
 .btn.danger { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 55%, transparent); }
 .round.stop { background: var(--text); color: var(--on-accent); }
@@ -653,3 +649,19 @@ body.wide #side { background: var(--housing); border-right: 1px solid var(--seam
 .dot.run { animation: breathe-run 1.6s ease-in-out infinite; }
 @keyframes breathe-run { 50% { opacity: 0.55; } }
 .crumbs button { color: var(--text-2); }
+
+/* ---------- tab bar: every section one tap away, on every screen (phone) ---------- */
+:root { --tabs-h: 50px; --composer-pb: 8px; } /* the bar adds the safe area itself, so things above it don't */
+body.wide, body:has(textarea:focus, input:not([type="checkbox"]):focus, select:focus) { --tabs-h: 0px; --composer-pb: calc(var(--bottom) + 8px); } /* keyboard up: the tab bar steps aside */
+#tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 7; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  height: calc(var(--tabs-h) + var(--bottom)); padding-bottom: var(--bottom); border-top: 1px solid var(--seam);
+  background: color-mix(in srgb, var(--housing) 94%, transparent); -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px); }
+body.wide #tabs, body:has(textarea:focus, input:not([type="checkbox"]):focus, select:focus) #tabs { display: none; }
+#tabs .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; color: var(--text-3);
+  font-size: 11px; font-weight: 500; text-decoration: none; transition: color 160ms var(--ease); }
+#tabs .tab svg.i { width: 24px; height: 24px; }
+#tabs .tab[aria-current="page"] { color: var(--text); }
+#tabs .tab:active { color: var(--text-2); }
+/* desktop: the same sections under the open machine in the sidebar */
+.side-nav { display: grid; gap: 1px; margin: 0 0 6px; }
+.side-nav .side-link { margin: 0; }

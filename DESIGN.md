@@ -84,6 +84,7 @@ spacing:
 - **Thread band:** plain text with the state word in its state colour, elapsed time (`04:31`), who, when, and `N queued`. A thin moving hairline shows a turn is running. No LED panels, clocks in boxes or stamps.
 - **Handoffs:** a centred hairline seam reading "● → ● Claude school took over · reason".
 - **Motion:** state changes ease out (`cubic-bezier(0.22, 1, 0.36, 1)`). Running dots in lists breathe. Everything respects `prefers-reduced-motion`.
+- **Navigation:** one tab bar on the phone (Machines · Threads · Projects · Accounts · Files), on every screen, with icon plus 11px label and the active tab in full text colour. It hides while a field has focus. On desktop the same sections are links in the sidebar. A screen's top bar holds only back (for pushed screens like a thread) and that screen's own actions. There are no segmented controls for sections.
 - **Touch:** 44px targets, and the composer stays pinned above the safe area.
 
 ## Retired
