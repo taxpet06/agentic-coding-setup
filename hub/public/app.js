@@ -92,23 +92,24 @@ function bar({ back, mid, end = [], always = false }) {
 }
 const navIcon = (name, label, onclick, attrs = {}) => h('button', { class: 'navbtn', 'aria-label': label, title: label, onclick, ...attrs }, icon(name));
 
-// the signature: a machine's three accounts as a scoreboard row; the one used next holds possession
+// a machine's three accounts as quiet usage meters; the live dot marks the one running now
 function meters(info) {
   const now = info.now ?? Date.now();
   return h('div', { class: 'board', role: 'list', 'aria-label': 'Agent accounts' }, PROVIDERS.map(p => {
     const a = info.accounts?.[p] ?? {};
-    // possession (and the reserved orange) is the account running a turn now; the one used next just says so, in neutral text
+    // the live dot (and the reserved blue) is the account running a turn now; the one used next just says so, in neutral text
     const out = a.limitedUntil && a.limitedUntil > now, off = !a.installed || !a.loggedIn, live = !!info.live?.includes(p), next = !live && info.next === p;
     const pct = a.utilization != null ? Math.round(a.utilization * 100) : null;
-    const state = out ? `back ${clock(a.limitedUntil)}` : off ? (a.installed ? 'logged out' : 'not set up') : pct != null ? 'used' : 'ready';
+    const state = out ? `back ${clock(a.limitedUntil)}` : off ? (a.installed ? 'logged out' : 'not set up') : live ? 'running' : pct != null ? 'used' : '';
     return h('div', { class: `cell c-${p}${out ? ' out' : ''}${off ? ' off' : ''}${live ? ' live' : ''}${next ? ' next' : ''}`, role: 'listitem',
-      'aria-label': `${LABEL[p]}: ${out ? `out of usage until ${clock(a.limitedUntil)}` : pct != null ? `${pct}% used` : state}${live ? ', running now' : next ? ', used next' : ''}` },
+      style: { '--w': `${pct ?? 0}%` }, 'aria-label': `${LABEL[p]}: ${out ? `out of usage until ${clock(a.limitedUntil)}` : pct != null ? `${pct}% used` : state}${live ? ', running now' : next ? ', used next' : ''}` },
       h('div', { class: 'k' }, live ? h('span', { class: 'poss', 'aria-hidden': 'true' }) : null, h('span', { class: 'kn' }, SHORT[p])),
-      h('div', { class: 'score num', 'aria-hidden': 'true' }, out ? 'OUT' : off || pct == null ? '—' : [String(pct), h('small', {}, '%')]),
+      h('div', { class: 'score num', 'aria-hidden': 'true' }, out ? 'Out' : off ? 'Off' : pct == null ? 'Ready' : [String(pct), h('small', {}, '%')]),
+      h('div', { class: 'bar-t', 'aria-hidden': 'true' }, h('i')),
       h('div', { class: 'v', 'aria-hidden': 'true' }, next && !out && !off ? 'next up' : state));
   }));
 }
-// scoreboard clock: 04:31, or 1:04:31 past an hour
+// elapsed clock: 04:31, or 1:04:31 past an hour
 const gameClock = ms => { const s = Math.max(0, Math.floor(ms / 1000)), hh = Math.floor(s / 3600), mm = Math.floor(s / 60) % 60, ss = String(s % 60).padStart(2, '0'); return hh ? `${hh}:${String(mm).padStart(2, '0')}:${ss}` : `${String(mm).padStart(2, '0')}:${ss}`; };
 
 // ---------- home: devices ----------
@@ -568,7 +569,7 @@ function thread(id, tid) {
     const q = t?.queue ?? [];
     queueEl.hidden = !q.length;
     queueEl.replaceChildren(...q.map((m, i) => h('div', { class: 'q' },
-      h('span', { class: 'k' }, i ? 'Then' : 'On deck'),
+      h('span', { class: 'k' }, i ? 'Then' : 'Next'),
       h('span', { class: 't' }, m.text),
       h('button', { class: 'qb', type: 'button', 'aria-label': 'Edit queued message', onclick: async () => {
         try { await api(`${dev(id)}threads/${tid}/queue/${m.id}`, { method: 'DELETE' }); input.value = input.value.trim() ? `${input.value}\n${m.text}` : m.text; if (!editing) saved.set(dkey, input.value); grow(); paintSend(); input.focus(); } catch (e) { toast(e.message); }
@@ -586,11 +587,11 @@ function thread(id, tid) {
     band.className = `band${asks ? ' ask' : running ? ' running' : last?.status === 'failed' ? ' failed' : last?.status === 'stopped' || last?.status === 'interrupted' ? ' stopped' : ''}`;
     const who = last?.provider ? SHORT[last.provider] : running ? 'picking an account' : '';
     const word = asks ? (pending.some(i => i.kind === 'question') ? 'Claude asks' : 'Needs you') : running ? 'Working' : { done: 'Done', failed: 'Failed', stopped: 'Stopped', interrupted: 'Interrupted' }[last?.status] ?? 'Idle';
-    // the band is the game clock while a turn runs; otherwise the final word and when
+    // while a turn runs the band shows its elapsed time; otherwise the final word and when
     const time = running ? null : last?.endedAt ? (ago(last.endedAt) === 'now' ? 'just now' : `${ago(last.endedAt)} ago`) : '';
     bandWhat.replaceChildren(...[h('b', {}, word), running ? h('span', { class: 'clock num', 'aria-label': `${dur(Date.now() - last.startedAt)} so far` }, gameClock(Date.now() - last.startedAt)) : null,
       [who, time].filter(Boolean).map(s => ` · ${s}`).join(''),
-      t.queue?.length ? h('span', { class: 'deck' }, h('b', {}, 'On deck'), h('span', { class: 'n num' }, String(t.queue.length))) : null].filter(Boolean));
+      t.queue?.length ? h('span', { class: 'deck num' }, `${t.queue.length} queued`) : null].filter(Boolean));
     archive.disabled = running;
     paintSend();
   }
@@ -615,7 +616,7 @@ function thread(id, tid) {
       if (it.kind === 'text') el.append(prose(it.text));
       else if (it.kind === 'seam') el.append(h('div', { class: 'seam', role: 'note' }, h('span', { class: 'lab' },
         h('span', { class: 'dot from', style: { '--cf': `var(--${it.from})` } }), '→', h('span', { class: 'dot to', style: { '--ct': `var(--${it.to})` } }),
-        h('b', { class: 'sub' }, 'SUB'), ` ${LABEL[it.to]} in · ${it.reason}`)));
+        ` ${LABEL[it.to]} took over · ${it.reason}`)));
       else if (it.kind === 'approval') el.append(approvalCard(it));
       else if (it.kind === 'question') el.append(questionCard(it));
       else if (it.kind === 'changes') el.append(changesCard(it));

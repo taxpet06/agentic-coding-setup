@@ -1,41 +1,38 @@
-/* Hub: the scoreboard for your agents. A night-game board: scoreboard-green housing for the shell over a near-black
-   field, black LED panels for numbers, condensed athletic numerals, team colours for accounts, and one reserved
-   live colour (scoreboard orange) for whatever is running right now. Dark only. */
-@font-face { font-family: "Board"; src: url("vendor/fonts/BarlowCondensed-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
-@font-face { font-family: "Board"; src: url("vendor/fonts/BarlowCondensed-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+/* Hub: a quiet graphite tool. One neutral dark surface, the system face throughout, near-white for primary actions,
+   colour only where it carries meaning: the three accounts (personal amber, school violet, Codex teal) and one
+   live blue for whatever is running right now. Dark only. */
 :root {
   color-scheme: dark;
-  --bg: #070d0a;            /* the field at night */
-  --housing: #0f2a1d;       /* scoreboard green: top bar, sidebar, composer */
-  --housing-2: #15382a;
-  --led: #020503;           /* the black display panels numbers sit in */
-  --panel: #0e1712;
-  --panel-2: #16221b;
-  --seam: rgba(205, 255, 222, 0.085);
-  --seam-strong: rgba(205, 255, 222, 0.17);
-  --text: #eef5f0;
-  --text-2: #a8b9ae;
-  --text-3: #7f9187;
-  --press: rgba(205, 255, 222, 0.075);
-  --user: #17342a;
-  --code-bg: #08110c;
+  --bg: #0b0b0c;
+  --housing: #111113;       /* chrome: top bar on desktop, sidebar */
+  --housing-2: #1c1c1f;
+  --led: #161618;
+  --panel: #161618;
+  --panel-2: #222225;
+  --seam: rgba(255, 255, 255, 0.07);
+  --seam-strong: rgba(255, 255, 255, 0.13);
+  --text: #f2f2f3;
+  --text-2: #a3a3a9;
+  --text-3: #7d7d84;
+  --press: rgba(255, 255, 255, 0.06);
+  --user: #232326;
+  --code-bg: #111113;
 
-  --personal: #f5ac3c;      /* team colours: the three accounts */
-  --school: #ae96ff;
-  --codex: #34d7b9;
-  --live: #ff6a33;          /* reserved: running now (clock, possession, live dots) */
+  --personal: #eda64a;      /* the three accounts */
+  --school: #a995ff;
+  --codex: #43cdb6;
+  --live: #4c9dff;          /* reserved: running now */
   --run: var(--live);
-  --ok: #5fdc95;
-  --bad: #ff5a6c;
-  --warn: #ffd23f;          /* waiting on you */
-  --accent: #eaf3ec;        /* chalk: primary actions, focus, selection */
-  --on-accent: #06130c;
-  --link: #8ccaff;
+  --ok: #3fcf7f;
+  --bad: #ff5d5d;
+  --warn: #ffcc3d;          /* waiting on you */
+  --accent: #f2f2f3;        /* primary actions, focus, selection */
+  --on-accent: #0b0b0c;
+  --link: #79b5ff;
 
   --r-row: 12px;
   --r-ctl: 9px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
-  --board: "Board", "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --top: env(safe-area-inset-top, 0px);
@@ -594,94 +591,65 @@ body.wide .code-view { margin: 0; border-radius: 12px; }
 .fc-dl:active, .fc-row:active { background: var(--press); }
 @media (hover: hover) { .fc-row:hover, .fc-dl:hover { background: var(--press); } }
 
-/* ================= the night-game world ================= */
-/* the field: a touch lighter under the board, settling to night */
-body { background: linear-gradient(180deg, #0c1812 0, var(--bg) 360px) no-repeat, var(--bg); }
-::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); } /* chalk: orange is reserved for what's running */
-
-/* type: condensed athletic face for titles, numbers, labels and actions; the system face for reading */
-h1.title { font-family: var(--board); font-weight: 700; font-size: 46px; line-height: 0.98; letter-spacing: 0; margin: 10px 0 6px; }
-h1.title.file-title { font-family: var(--mono); font-size: 24px; font-weight: 600; line-height: 1.2; }
-h2.section { font-family: var(--board); font-weight: 700; font-size: 21px; letter-spacing: 0.01em; color: var(--text); }
-.brand { font-family: var(--board); font-size: 27px; letter-spacing: 0.01em; }
-.tag, .row .tag { background: var(--panel-2); color: var(--text-2); border-radius: 5px; }
-.stamp { font-family: var(--board); font-size: 15px; letter-spacing: 0.1em; border-radius: 4px; }
-.seg { background: var(--led); box-shadow: inset 0 0 0 1px var(--seam); }
-
-.seg button[aria-selected="true"] { background: var(--housing-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--seam-strong); }
-
-/* controls: chalk primary, standard shapes */
-
-.btn.quiet { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--seam); }
-.btn.danger { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--bad) 60%, transparent); }
-.round.stop { background: var(--live); color: var(--on-accent); }
-.navbtn { color: var(--accent); }
-
-/* shell: the scoreboard housing */
-.bar { background: color-mix(in srgb, var(--housing) 94%, transparent); }
-.bar.scrolled { border-bottom-color: rgba(0, 0, 0, 0.45); }
-.composer { background: color-mix(in srgb, var(--housing) 95%, transparent); border-top: 1px solid rgba(0, 0, 0, 0.45); }
-.composer .box { background: var(--bg); }
-body.wide #side { background: var(--housing); border-right: 1px solid rgba(0, 0, 0, 0.45); }
-.side-t.on, .side-link.on { background: var(--housing-2); box-shadow: inset 0 0 0 1px var(--seam-strong); }
-.side-dev-row[aria-current="page"] { background: var(--housing-2); }
+/* ================= quiet layer ================= */
+h1.title.file-title { font-family: var(--mono); font-size: 24px; font-weight: 600; line-height: 1.2; letter-spacing: 0; }
+h2.section { font-size: 15px; font-weight: 600; color: var(--text-2); }
+.brand { font-size: 19px; }
+.tag, .row .tag { background: var(--panel-2); color: var(--text-2); border-radius: 6px; font-weight: 500; }
+.stamp { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; box-shadow: none; padding: 3px 9px;
+  background: color-mix(in srgb, currentColor 14%, transparent); }
+.seg button[aria-selected="true"] { background: #3a3a3f; color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+.btn.quiet { background: var(--panel-2); color: var(--text); }
+.btn.danger { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 55%, transparent); }
+.round.stop { background: var(--text); color: var(--on-accent); }
+.composer { background: color-mix(in srgb, var(--bg) 88%, transparent); }
+.composer .box { background: var(--panel); }
+body.wide #side { background: var(--housing); border-right: 1px solid var(--seam); }
+.side-t.on, .side-link.on, .side-dev-row[aria-current="page"] { background: var(--housing-2); }
 .group, .new, .todo, details.changes, .file-card, .approval, .qcard, .note-card, .queue .q { background: var(--panel); }
 .msg-user { background: var(--user); }
 
-/* SIGNATURE: each machine's accounts as a scoreboard row; possession on the account used next */
-.board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
-.cell { position: relative; min-width: 0; padding: 8px 10px 8px; border-radius: 8px; background: var(--led);
-  box-shadow: inset 0 0 0 1px var(--seam), inset 0 3px 0 var(--c); }
-.cell .k { display: flex; align-items: center; gap: 6px; font-family: var(--board); font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); white-space: nowrap; overflow: hidden; }
+/* accounts: three quiet meters, one per account; the one running now gets the live dot */
+.board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.cell { min-width: 0; display: grid; gap: 3px; align-content: start; }
+.cell .k { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; }
+.cell .k::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
 .cell .kn { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-@media (max-width: 380px) { .cell .k { letter-spacing: 0.03em; font-size: 12px; } }
-.cell .score { font-family: var(--board); font-weight: 700; font-size: 36px; line-height: 1; margin-top: 4px; color: var(--c); letter-spacing: 0.01em; }
-.cell .score small { font-size: 19px; margin-left: 1px; }
-.cell .v { margin-top: 3px; font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cell .poss { flex: none; width: 8px; height: 10px; background: var(--live); clip-path: polygon(0 0, 100% 50%, 0 100%); }
-.cell.live { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--live) 50%, transparent), inset 0 3px 0 var(--c); }
+.cell .score { font-size: 17px; font-weight: 600; line-height: 1.3; color: var(--text); }
+.cell .score small { font-size: 13px; font-weight: 500; color: var(--text-2); margin-left: 1px; }
+.cell .bar-t { height: 3px; border-radius: 2px; background: var(--panel-2); overflow: hidden; margin-top: 2px; }
+.cell .bar-t i { display: block; height: 100%; width: var(--w, 0%); background: var(--c); border-radius: inherit; }
+.cell .v { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell .poss { order: 2; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
 .cell.live .k { color: var(--text); }
+.cell.next .v { color: var(--text-2); }
 .cell.out .score { color: var(--bad); }
+.cell.out .bar-t i { background: var(--bad); width: 100%; }
 .cell.off .score, .cell.off .k { color: var(--text-3); }
-.cell.off { box-shadow: inset 0 0 0 1px var(--seam), inset 0 3px 0 color-mix(in srgb, var(--c) 35%, transparent); }
-#side .board { gap: 4px; margin: 2px 8px 8px; }
-#side .cell { padding: 6px 7px; }
-#side .cell .score { font-size: 28px; }
+.cell.off .k::before { opacity: 0.4; }
+#side .board { gap: 10px; margin: 4px 8px 10px; }
+#side .cell .score { font-size: 15px; }
 
-/* SIGNATURE: the thread band is the game clock while a turn runs */
+/* thread band: state word, elapsed time, queue count; plain text, coloured by state */
 .band { background: color-mix(in srgb, var(--bg) 92%, transparent); }
 .band .what { display: flex; align-items: center; gap: 0; }
-.band .what b { font-family: var(--board); font-weight: 700; font-size: 17px; letter-spacing: 0.07em; text-transform: uppercase; margin-right: 2px; }
-.band .clock { flex: none; font-family: var(--board); font-weight: 700; font-size: 22px; line-height: 1.15; color: var(--live); background: var(--led); padding: 0 8px; margin: 0 6px 0 8px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--seam); letter-spacing: 0.04em; }
+.band .what b { font-weight: 600; margin-right: 2px; }
+.band .clock { flex: none; font-size: 13px; color: var(--text-2); margin: 0 2px 0 8px; }
 .band.running .what b { color: var(--live); }
 .band.ask .what b { color: var(--warn); }
-
-/* SIGNATURE: an account handoff is a substitution */
-.seam .sub { font-family: var(--board); font-weight: 700; font-size: 13px; letter-spacing: 0.1em; color: var(--on-accent); background: var(--accent); padding: 0 6px; border-radius: 4px; margin-left: 2px; }
+.band.failed .what b { color: var(--bad); }
+.band.stopped .what b { color: var(--text-2); }
+.band .deck { flex: none; margin-left: 10px; font-size: 13px; color: var(--text-2); }
 
 /* the reading column keeps a fixed measure, whatever the screen */
 .prose > p, .prose > ul, .prose > ol, .prose > blockquote, .prose > h1, .prose > h2, .prose > h3, .prose > h4 { max-width: 68ch; }
 
-/* review fixes: the machine sits in the housing on every screen, the running count is a board numeral */
-.group:has(> .machine) { background: var(--housing); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45); }
-.group:has(> .machine) > * + * { box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.45); }
 .machine .name { display: flex; align-items: center; gap: 8px; }
 .machine .name .tag { margin-left: 0; }
-.machine .count { margin-left: auto; font-family: var(--board); font-weight: 700; font-size: 22px; line-height: 1; color: var(--text-3); }
-.machine .count small { font-family: var(--board); font-weight: 600; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+.machine .count { margin-left: auto; font-size: 13px; font-weight: 500; color: var(--text-3); }
 .machine .count.on { color: var(--live); }
 .machine .meta { color: var(--text-2); }
 /* a running dot never fades out of sight */
 .dot.run { animation: breathe-run 1.6s ease-in-out infinite; }
-@keyframes breathe-run { 50% { opacity: 0.7; } }
-/* on deck: board lettering and an LED count */
-.band .deck { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; flex: none; }
-.band .deck b { font-family: var(--board); font-weight: 700; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
-.band .deck .n { font-family: var(--board); font-weight: 700; font-size: 18px; line-height: 1.2; color: var(--text); background: var(--led); padding: 0 7px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--seam); }
-.queue .k { font-family: var(--board); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
-/* stopped and failed are stamped, never just greyed */
-.band.stopped .what b, .band.failed .what b { box-shadow: inset 0 0 0 1.5px currentColor; padding: 0 6px; border-radius: 4px; }
-.band.stopped .what b { color: var(--text-2); }
+@keyframes breathe-run { 50% { opacity: 0.55; } }
 .crumbs button { color: var(--text-2); }
-.cell.next .v { color: var(--text-2); }
-.band.running .what .deck b { color: var(--text-2); } /* a queued message isn't running: keep it off the reserved orange */
