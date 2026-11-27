@@ -87,6 +87,18 @@ spacing:
 - **Navigation:** one tab bar on the phone (Machines · Threads · Projects · Accounts · Files), on every screen, with icon plus 11px label and the active tab in full text colour. It hides while a field has focus. On desktop the same sections are links in the sidebar. A screen's top bar holds only back (for pushed screens like a thread) and that screen's own actions. There are no segmented controls for sections.
 - **Touch:** 44px targets, and the composer stays pinned above the safe area.
 
+## Logo
+
+**Link:** two pillars (machines) lean in toward one live dot, so the H is drawn as a connection. The masters and their generator are in `hub/brand/`; run `python3 hub/brand/make.py <dir>` to rebuild every SVG.
+
+- **Colours:** the pillars are `text` #f2f2f3 and the dot is `live-blue` #4c9dff, on a #111113 tile. On light backgrounds use `hub-mark-black.svg`; on photos or colour use the one-colour white or black version. Never recolour only the pillars.
+- **Files:**
+  - `icon-180.png` and `icon-512.png` are full-bleed tiles at 62% mark scale, safe for iOS and maskable cropping.
+  - `icon.svg` is the small-size cut for 16–32 px (favicon, sidebar). It has a larger mark, a wider gap around the dot and a rounded tile.
+  - `badge-96.png` is the white-on-transparent notification badge.
+- **Clear space:** leave one pillar width around the mark. Minimum size is 16 px, using the small cut.
+- **Don't:** rotate it, outline it, add gradients or shadows, put text inside the tile, or swap the dot for another shape.
+
 ## Retired
 
 The night-game scoreboard world was removed on 2026-11-27 because the owner found it gimmicky and "vibe coded". It had a green housing, Barlow Condensed numerals, LED cells, an orange possession arrow, ON DECK and SUB stamps. Don't bring any of it back.

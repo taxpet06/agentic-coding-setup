@@ -1,6 +1,6 @@
 // Push notifications + an offline shell. API calls are never cached: stale agent state is worse than none.
-const SHELL = 'hub-shell-v6';
-const FILES = ['./', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png', 'vendor/marked.js', 'vendor/purify.js'];
+const SHELL = 'hub-shell-v7';
+const FILES = ['./', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png', 'badge-96.png', 'vendor/marked.js', 'vendor/purify.js'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
@@ -18,7 +18,7 @@ self.addEventListener('push', e => {
   let p = {};
   try { p = e.data?.json() ?? {}; } catch { p = { body: e.data?.text() }; }
   e.waitUntil(self.registration.showNotification(p.title || 'Hub', {
-    body: p.body || '', tag: p.tag, renotify: !!p.tag, icon: 'icon-180.png', badge: 'icon-180.png', data: { url: p.url || '/' },
+    body: p.body || '', tag: p.tag, renotify: !!p.tag, icon: 'icon-180.png', badge: 'badge-96.png', data: { url: p.url || '/' },
   }));
 });
 self.addEventListener('notificationclick', e => {
